@@ -1,0 +1,7 @@
+data/
+.venv/
+__pycache__/
+*.egg-info/
+# audit.yaml contient des chemins locaux
+audit.yaml
+# Sorties brutes : contiennent des secrets en clair, ne jamais versionner

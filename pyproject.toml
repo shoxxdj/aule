@@ -1,0 +1,23 @@
+[project]
+name = "aule-audit"
+version = "0.1.0"
+description = "Aulë : assistant d'audit de code. Orchestre cloc, gitleaks, opengrep, CodeQL… sur un dossier de projets, recoupe les résultats et aide à les trier."
+readme = "README.md"
+requires-python = ">=3.11"
+# PyYAML : fichier de configuration des outils. FastAPI viendra avec l'interface web.
+dependencies = ["pyyaml>=6"]
+
+[project.optional-dependencies]
+# Exports Excel et Word (`aule export --format xlsx|docx`) : uv sync --extra export
+export = ["openpyxl>=3.1", "python-docx>=1.1"]
+
+[project.scripts]
+aule = "aule.cli:main"
+audit = "aule.cli:main"   # ancien nom de la commande, conservé comme alias
+
+[build-system]
+requires = ["uv_build>=0.8,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "aule"

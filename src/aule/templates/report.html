@@ -1,0 +1,1433 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Audit __AUDIT_ID__</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%92%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<style>
+:root{--bg:#f5f6f8;--panel:#fff;--text:#1b2330;--muted:#667085;--border:#e2e6ec;--accent:#3b5bdb;--accent-bg:#e8edff;
+--ok:#2b8a3e;--ok-bg:#e6f6ea;--warn:#d9480f;--warn-bg:#fff0e6;--bad:#c92a2a;--bad-bg:#ffe8e8;--chip:#eef1f6;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141b;--panel:#171d26;--text:#e6eaf0;--muted:#8b97a8;--border:#273140;
+--accent:#7c93ff;--accent-bg:#222c52;--ok:#51cf66;--ok-bg:#15301c;--warn:#ff922b;--warn-bg:#3a2412;--bad:#ff6b6b;--bad-bg:#3a1a1a;--chip:#222b38}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:20px 28px 8px}
+.brand{font-size:13px;font-weight:700;letter-spacing:.02em;color:var(--warn);margin-bottom:4px}
+.brand span{color:var(--muted);font-weight:400}
+h1{margin:0;font-size:20px}
+.sub{color:var(--muted);margin-top:4px;font-size:13px}
+.notice{margin:10px 28px 0;padding:8px 12px;background:var(--warn-bg);color:var(--warn);border-radius:8px;font-size:13px}
+.notice.danger{background:var(--bad-bg);color:var(--bad);font-weight:600}
+.notice.info{background:var(--chip);color:var(--muted);font-weight:400}
+pre.snippet{margin:0;padding:8px 10px;background:var(--panel);border:1px solid var(--border);border-radius:8px;font:12.5px/1.45 var(--mono);white-space:pre-wrap;word-break:break-all;max-height:260px;overflow:auto}
+.flow{margin:0;padding-left:20px}
+.flow li{margin:2px 0}
+.secret{font-family:var(--mono);font-size:12.5px;word-break:break-all;color:var(--bad)}
+.toolbar{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 28px;background:var(--bg);border-bottom:1px solid var(--border);margin-top:10px}
+.tabs{display:flex;gap:4px;flex-wrap:wrap}
+.tab{border:0;background:transparent;color:var(--muted);padding:7px 12px;border-radius:8px;cursor:pointer;font:inherit}
+.tab:hover{background:var(--chip)}
+.tab[aria-selected=true]{background:var(--accent-bg);color:var(--accent);font-weight:600}
+.tab .n{margin-left:6px;font-size:11px;background:var(--chip);color:var(--muted);padding:1px 6px;border-radius:9px}
+.spacer{flex:1}
+select,input[type=search]{font:inherit;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text)}
+input[type=search]{min-width:200px}
+main{padding:18px 28px 60px;max-width:1500px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:18px}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.kpi .v{font-size:24px;font-weight:650}
+.kpi .l{color:var(--muted);font-size:12px}
+.kpi .d{color:var(--muted);font-size:12px;margin-top:2px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:auto;margin-bottom:18px}
+.card h2{font-size:14px;margin:0;padding:12px 14px;border-bottom:1px solid var(--border)}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600;white-space:nowrap;user-select:none}
+th.sortable{cursor:pointer}
+th.sortable:hover{color:var(--text)}
+tr:last-child td{border-bottom:0}
+tr.row:hover td{background:var(--chip)}
+tr.clickable{cursor:pointer}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:var(--mono);font-size:12.5px;word-break:break-all}
+.muted{color:var(--muted)}
+.chip{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:var(--chip);margin:0 4px 2px 0;white-space:nowrap}
+.chip.ok{background:var(--ok-bg);color:var(--ok)}
+.chip.warn{background:var(--warn-bg);color:var(--warn)}
+.chip.bad{background:var(--bad-bg);color:var(--bad)}
+.chip.accent{background:var(--accent-bg);color:var(--accent)}
+.bar{display:flex;height:9px;border-radius:5px;overflow:hidden;background:var(--chip);min-width:140px}
+.bar>span{display:block;height:100%}
+.legend{font-size:12px;color:var(--muted);margin-top:4px}
+.detail td{background:var(--chip)}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:4px 14px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.toggle{border:1px solid var(--border);background:var(--panel);color:var(--text);padding:4px 11px;border-radius:14px;cursor:pointer;font:inherit}
+.toggle[aria-pressed=true]{background:var(--accent-bg);color:var(--accent);border-color:var(--accent)}
+.empty{padding:34px;text-align:center;color:var(--muted)}
+.copy{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:6px;cursor:pointer;font-size:11px;padding:1px 6px;margin-left:6px}
+.indent{display:inline-block;width:16px;color:var(--muted)}
+.triagebox{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.tbtn{border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:8px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12.5px}
+.tbtn:hover{background:var(--chip)}
+.tbtn.on{background:var(--accent-bg);color:var(--accent);border-color:var(--accent);font-weight:600}
+input[type=text],textarea{font:inherit;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text)}
+input.grow{flex:1;min-width:220px}
+textarea{width:100%;min-height:90px}
+.form{padding:14px;display:grid;gap:10px}
+.form label{display:grid;gap:4px;color:var(--muted);font-size:12px}
+.bulk{padding:6px 10px;background:var(--chip);border-radius:8px}
+.graph{display:block;width:100%;height:auto;background:var(--panel)}
+.graph text{fill:var(--text);font-size:11px;paint-order:stroke;stroke:var(--panel);stroke-width:3px}
+.node{cursor:pointer}
+.logbox{margin:0;padding:10px;max-height:340px;overflow:auto;font:12px/1.4 var(--mono);white-space:pre-wrap;background:var(--chip)}
+.progress{height:8px;background:var(--chip);border-radius:5px;overflow:hidden;margin:8px 0}
+.progress>span{display:block;height:100%;background:var(--accent)}
+.checks{display:flex;flex-wrap:wrap;gap:6px 16px}
+.checks label{display:flex;gap:5px;align-items:center;color:var(--text);font-size:13px}
+.rawgrid{display:grid;grid-template-columns:minmax(250px,320px) minmax(0,1fr);gap:14px;align-items:start}
+.rawtree{max-height:78vh;overflow:auto;padding:6px 8px}
+.rawentry{margin:6px 0 10px}
+.rawentry .head{font-size:12.5px;margin-bottom:2px}
+.file{cursor:pointer;padding:2px 8px;border-radius:6px;font-size:12.5px}
+.file:hover{background:var(--chip)}
+.file.sel{background:var(--accent-bg);color:var(--accent)}
+.jtree{padding:8px 10px;font:12.5px/1.55 var(--mono);overflow:auto;max-height:72vh}
+.jrow{cursor:pointer;white-space:pre-wrap;word-break:break-all}
+.jrow:hover{background:var(--chip)}
+.rres{border-bottom:1px solid var(--border);padding:8px 12px;cursor:pointer}
+.rres:hover{background:var(--chip)}
+.rres .t{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.subtabs{display:flex;gap:6px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--border)}
+.step{font:12.5px/1.45 var(--mono)}
+.codegrid{display:grid;grid-template-columns:minmax(240px,310px) minmax(0,1fr);gap:14px;align-items:start}
+.ctree{max-height:56vh;overflow:auto;padding:6px 8px;font-size:12.5px}
+.cnode{cursor:pointer;padding:1px 4px;border-radius:5px;white-space:nowrap;display:flex;gap:6px;align-items:baseline}
+.cnode:hover{background:var(--chip)}
+.cnode.sel{background:var(--accent-bg);color:var(--accent)}
+.cnode .nm{overflow:hidden;text-overflow:ellipsis}
+.codebox{border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:64vh;background:var(--panel)}
+.cl{display:flex;font:12.5px/1.5 var(--mono);white-space:pre}
+.cl .ln{flex:0 0 58px;text-align:right;padding:0 10px 0 4px;color:var(--muted);user-select:none;cursor:pointer}
+.cl .mk{flex:0 0 30px;text-align:center}
+.cl .src{flex:1 0 auto;padding-right:18px}
+.cl.rng{background:var(--warn-bg)}
+.cl.tgt{background:var(--accent-bg);box-shadow:inset 3px 0 var(--accent)}
+.cl.stp{background:var(--bad-bg)}
+.cl.hit .src{outline:1px solid var(--accent)}
+.mkb{border:0;border-radius:9px;font:11px/16px system-ui,sans-serif;min-width:18px;padding:0 4px;cursor:pointer;color:#fff;background:var(--muted)}
+.mkb.bad{background:var(--bad)}
+.mkb.warn{background:var(--warn)}
+.stepn{display:inline-block;border-radius:9px;background:var(--bad);color:#fff;font:11px/16px system-ui,sans-serif;padding:0 5px;margin-left:8px}
+.crow{display:flex;gap:8px;align-items:baseline;padding:3px 10px;cursor:pointer;font-size:12.5px}
+.crow:hover{background:var(--chip)}
+.crow.cur{background:var(--accent-bg)}
+.cbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0}
+.cbar input[type=text]{width:150px}
+@media print{.toolbar,.copy{display:none}body{background:#fff}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">⚒️ Aulë <span>· le forgeron de l’audit</span></div>
+  <h1 id="title"></h1>
+  <div class="sub" id="subtitle"></div>
+</header>
+<div id="notices"></div>
+<div class="toolbar">
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="spacer"></div>
+  <span id="runwrap"></span>
+  <select id="project" aria-label="Projet"></select>
+  <input id="q" type="search" placeholder="Rechercher…" aria-label="Rechercher">
+</div>
+<main id="view"></main>
+
+<script id="audit-data" type="application/json">__AUDIT_DATA__</script>
+<script>
+"use strict";
+let D = JSON.parse(document.getElementById("audit-data").textContent);
+const LIVE = !!D.options.live;
+const TOKEN = D.options.token || "";
+
+/* ---------- utilitaires (le contenu des dépôts est non fiable : tout passe par textContent) ---------- */
+function h(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  let value;
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "style") e.setAttribute("style", v);
+    else if (k === "value") value = v;
+    else if (k === "checked") e.checked = true;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? "" : String(v));
+  }
+  for (const k of kids.flat(Infinity)) {
+    if (k === null || k === undefined || k === false) continue;
+    e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  }
+  if (value !== undefined) e.value = value;  // après les enfants : <select> et ses <option>
+  return e;
+}
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(tag, props, ...kids) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, String(v));
+  }
+  for (const c of kids.flat(Infinity)) {
+    if (c === null || c === undefined || c === false) continue;
+    e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+const fmt = n => (n ?? 0).toLocaleString("fr-FR");
+const short = s => (s ? String(s).slice(0, 8) : "");
+const color = lang => { let x = 0; for (const c of lang) x = (x * 31 + c.charCodeAt(0)) % 360; return `hsl(${x} 55% 52%)`; };
+const STATUS = {ok: "ok", skipped: "", unavailable: "warn", failed: "bad", timeout: "bad", parse_error: "bad"};
+const STATUS_FR = {ok: "ok", skipped: "ignoré", unavailable: "indisponible", failed: "échec", timeout: "délai dépassé", parse_error: "erreur de parsing"};
+const SEV_RANK = {critical: 4, high: 3, medium: 2, low: 1, info: 0};
+const SEV_FR = {critical: "critique", high: "élevée", medium: "moyenne", low: "faible", info: "info"};
+const SEV_ORDER = ["critical", "high", "medium", "low", "info"];
+const sevChip = sev => chip(SEV_FR[sev] || sev, sev === "critical" || sev === "high" ? "bad" : sev === "medium" ? "warn" : "");
+let REVEAL = !!D.options.reveal;
+const TRIAGE_STATES = [["to_review", "à revoir"], ["confirmed", "confirmé"], ["accepted_risk", "risque accepté"], ["false_positive", "faux positif"]];
+const TRIAGE_FR = Object.fromEntries(TRIAGE_STATES);
+const triageChip = t => !t ? chip("non trié") : chip(TRIAGE_FR[t] || t, t === "confirmed" ? "bad" : t === "to_review" ? "warn" : t === "accepted_risk" ? "accent" : "ok");
+const chip = (text, cls) => h("span", {class: "chip " + (cls || "")}, text);
+function copyBtn(text) {
+  return h("button", {class: "copy", title: "Copier", onclick: ev => {
+    ev.stopPropagation();
+    if (navigator.clipboard) navigator.clipboard.writeText(text);
+  }}, "copier");
+}
+
+/* ---------- mode live : API, brouillons, triage ---------- */
+function track(p) { (globalThis.__pending ||= []).push(p); return p; }  // permet aux tests d'attendre les actions asynchrones
+async function api(path, opts = {}) {
+  const res = await fetch(path, {method: opts.method || "GET",
+    headers: {"X-Audit-Token": TOKEN, ...(opts.body !== undefined ? {"Content-Type": "application/json"} : {})},
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+const run = fn => track((async () => {
+  state.flash = null;
+  try { await fn(); } catch (e) { state.flash = {msg: String(e.message || e), bad: true}; render(); }
+})());
+async function refresh() {
+  D = await api("/api/data" + (state.run ? `?run=${encodeURIComponent(state.run)}` : ""));
+  prepare();
+  resetBrowsers();
+  if (state.project && !byName[state.project]) state.project = "";
+  render();
+}
+// champ de saisie dont le brouillon survit aux rendus (chaque rendu reconstruit la page)
+const draft = (key, initial) => state.drafts[key] ?? initial ?? "";
+const textInput = (key, initial, props = {}) => h("input", {type: "text", value: draft(key, initial), oninput: e => { state.drafts[key] = e.target.value; }, ...props});
+const labelled = (text, el) => h("label", {}, text, el);
+const critOk = r => !state.crit || (state.crit === "none" ? !r.critique : (r.critique || {}).verdict === state.crit);
+const notFp = r => !(state.hideFp && r.triage === "false_positive") && critOk(r);
+const hasCrit = () => [...D.secrets, ...D.sast, ...D.vulns].some(r => r.critique);
+const CRIT_FR = {true_positive: "vrai positif", false_positive: "faux positif", uncertain: "incertain", error: "erreur"};
+const critChip = c => !c ? null : c.injection_suspected ? chip("IA ⚠ injection suspectée", "bad")
+  : chip(`IA : ${CRIT_FR[c.verdict] || c.verdict}${c.confidence != null ? " " + Math.round(c.confidence * 100) + " %" : ""}`,
+      c.verdict === "false_positive" ? "ok" : c.verdict === "true_positive" ? "warn" : c.verdict === "error" ? "bad" : "");
+const fpToggle = () => [hasGroups() ? h("button", {class: "toggle", "aria-pressed": state.group, title: "Regroupe les détections identiques (même secret dans le même fichier, même vulnérabilité vue par plusieurs outils) : un seul constat à trier",
+    onclick: () => { state.group = !state.group; render(); }}, "regrouper les doublons") : null,
+  h("button", {class: "toggle", "aria-pressed": state.hideFp, onclick: () => { state.hideFp = !state.hideFp; render(); }}, "masquer les faux positifs"),
+  hasCrit() ? selectOf(state.crit, [["", "Tout avis IA"], ["true_positive", "IA : vrai positif"], ["false_positive", "IA : faux positif"],
+    ["uncertain", "IA : incertain"], ["none", "sans avis IA"]], v => state.crit = v) : null];
+function critBox(x) {
+  const c = x.critique;
+  if (!c) return null;
+  return h("div", {}, h("div", {class: "muted"}, "Avis consultatif d'un modèle d'IA : à vérifier, il ne modifie pas le triage."),
+    h("div", {}, critChip(c), ` ${c.model} · ${c.rounds} tour(s)`), c.reasoning ? h("div", {}, c.reasoning) : null,
+    h("div", {class: "muted"}, c.sent.length ? "Code envoyé au modèle : " + c.sent.map(t => t.search ? `recherche « ${t.search} »` : `${t.file}:${t.start}-${t.end}`).join(", ") : "Aucun extrait de code envoyé."));
+}
+/* ---------- recoupement : une même réalité vue par plusieurs détections = UN constat à trier ---------- */
+const REASON_FR = {same_secret: "même valeur de secret dans le même fichier", nested_values: "valeurs imbriquées à la même ligne", same_cwe_location: "même CWE, lignes qui se recouvrent",
+  flow_endpoint: "extrémité du chemin de données", same_rule_location: "même règle au même emplacement", same_component_vuln: "même composant, même vulnérabilité", alias: "identifiants équivalents (alias CVE / GHSA)"};
+let _fpD = null, _fpMap = null;
+const fpIndex = () => { if (_fpD !== D) { _fpD = D; _fpMap = new Map([...D.secrets, ...D.sast, ...D.vulns].map(x => [x.fingerprint, x])); } return _fpMap; };
+const sizeOf = r => r.cluster ? r.cluster.size : 1;
+const hasGroups = () => [...D.secrets, ...D.sast, ...D.vulns].some(x => x.cluster && x.cluster.size > 1);
+const fpsOf = item => state.group && item.cluster ? item.cluster.members : [item.fingerprint];
+const nGroups = list => state.group ? new Set(list.map(x => x.cluster ? x.cluster.id : x.fingerprint)).size : list.length;
+function groupRows(rows) {  // une ligne par groupe : le représentant (le plus grave, le fichier courant en premier)
+  if (!state.group) return rows;
+  const by = new Map();
+  for (const r of rows) { const id = r.cluster ? r.cluster.id : "solo:" + r.fingerprint; (by.get(id) || by.set(id, []).get(id)).push(r); }
+  return [...by.values()].map(g => {
+    const rep = g.slice().sort((a, b) => (SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0) || (a.mode === "dir" ? 0 : 1) - (b.mode === "dir" ? 0 : 1))[0];
+    return sizeOf(rep) > 1 ? {...rep, _group: g} : rep;
+  });
+}
+const groupMembers = r => state.group && sizeOf(r) > 1 ? r.cluster.members.map(fp => fpIndex().get(fp)).filter(Boolean) : [r];
+const uniqOf = (r, f) => [...new Set(groupMembers(r).map(f).filter(Boolean))];
+const recoup = list => state.group && nGroups(list) !== list.length ? ` · ${list.length} détections recoupées` : "";
+const countText = (rows, view, all, noun) => state.group && view.length !== rows.length || state.group && nGroups(all) !== all.length
+  ? `${view.length} constat(s) affiché(s) (${rows.length} détection(s)) sur ${nGroups(all)} constat(s) · ${all.length} détection(s)` : `${rows.length} ${noun}(s) sur ${all.length}`;
+const groupCol = rows => rows.some(r => sizeOf(r) > 1) ? [{key: "_size", label: "Détections", num: true, sort: sizeOf,
+  render: r => sizeOf(r) > 1 ? h("span", {}, chip("×" + sizeOf(r), "accent"), r.cluster.conflict ? chip("⚠ triages divergents", "bad") : null) : ""}] : [];
+function membersBlock(r) {
+  if (!state.group || sizeOf(r) < 2) return null;
+  const ms = groupMembers(r);
+  return h("div", {}, h("div", {class: "muted"}, `${ms.length} détections regroupées (${r.cluster.reasons.map(x => REASON_FR[x] || x).join(" · ")}). Le triage s'applique à toutes.`),
+    r.cluster.conflict ? h("div", {class: "notice danger", style: "margin:6px 0"}, "⚠ Les détections de ce groupe ont des triages divergents : choisir un triage ci-dessus les aligne toutes.") : null,
+    ms.map(m => h("div", {class: "crow"}, chip(m.tool || "?", "accent"), m.mode ? chip(m.mode) : null,
+      h("span", {class: "mono"}, m.dependency ? `${m.dependency.name} ${m.dependency.version || ""} — ${m.dependency.file}` : `${m.file}${m.start_line ? ":" + m.start_line : ""}`),
+      m.commit ? h("span", {class: "mono muted"}, short(m.commit)) : null, triageChip(m.triage), h("span", {class: "mono muted"}, m.fingerprint.slice(0, 10)))));
+}
+function triageBox(item) {
+  if (!LIVE) return item.triage_comment ? h("span", {}, item.triage_comment) : null;
+  const key = "tc:" + item.fingerprint;
+  const note = textInput(key, item.triage_comment, {class: "grow", placeholder: "Commentaire de triage (justification)…"});
+  const set = status => run(async () => {
+    await api("/api/triage", {method: "POST", body: {fingerprints: fpsOf(item), status, comment: draft(key, item.triage_comment) || null}});
+    delete state.drafts[key];
+    await refresh();
+  });
+  return h("div", {class: "triagebox"},
+    TRIAGE_STATES.map(([s, l]) => h("button", {class: "tbtn" + (item.triage === s ? " on" : ""), onclick: e => { e.stopPropagation(); set(s); }}, l)),
+    item.triage ? h("button", {class: "tbtn", onclick: e => { e.stopPropagation(); run(async () => {
+      await api("/api/triage/clear", {method: "POST", body: {fingerprints: fpsOf(item)}}); await refresh(); }); }}, "effacer") : null,
+    note);
+}
+function bulkBar(rows) {
+  if (!LIVE || !rows.length) return null;
+  const eligible = rows.filter(r => r.critique && r.critique.verdict === "false_positive" && (r.critique.confidence || 0) >= 0.8 && !r.critique.injection_suspected && !r.triage);
+  return h("div", {class: "filters bulk"}, h("span", {class: "muted"}, `Marquer les ${rows.length} résultat(s) affichés :`),
+    TRIAGE_STATES.map(([s, l]) => h("button", {class: "tbtn", onclick: () => {
+      if (!confirm(`Marquer ${rows.length} résultat(s) comme « ${l} » ?`)) return;
+      run(async () => { await api("/api/triage", {method: "POST", body: {fingerprints: rows.flatMap(fpsOf), status: s}}); await refresh(); });
+    }}, l)),
+    eligible.length ? h("button", {class: "tbtn on", onclick: () => {
+      if (!confirm(`Marquer ${eligible.length} résultat(s) « faux positif » d'après l'avis du modèle d'IA (confiance ≥ 80 %, hors injection suspectée, sans triage existant) ?`)) return;
+      run(async () => { await api("/api/triage", {method: "POST", body: {fingerprints: eligible.flatMap(fpsOf), status: "false_positive",
+        comment: `avis IA (${eligible[0].critique.model}) : voir le détail de l'avis`}}); await refresh(); });
+    }}, `Appliquer l'avis IA : ${eligible.length} faux positif(s) probable(s)`) : null);
+}
+function findingButton(item, kind) {
+  if (!LIVE) return null;
+  return h("button", {class: "tbtn", onclick: e => {
+    e.stopPropagation();
+    const dep = item.dependency || {};
+    state.form = {id: null, project: item.project, status: "draft", refs: [item.fingerprint],
+      title: kind === "secret" ? `Secret exposé : ${item.rule_id}` : kind === "sast" ? (item.rule_name || item.rule_id) : `${item.id} — ${dep.name} ${dep.version || ""}`.trim(),
+      severity: kind === "secret" ? "high" : item.severity,
+      description: kind === "secret" ? `Trouvé dans ${item.file}:${item.start_line ?? "?"} (${item.mode}).` : kind === "sast" ? (item.message || "") : (item.description || "")};
+    state.drafts = Object.fromEntries(Object.entries(state.drafts).filter(([k]) => !k.startsWith("f:")));
+    state.tab = "constats"; render();
+  }}, "Créer un constat à partir de ceci");
+}
+const clearOf = s => s.secret ? {secret: s.secret, match: s.match} : state.revealed[s.fingerprint];
+function revealBtn(s) {
+  if (!LIVE || clearOf(s)) return null;
+  return h("button", {class: "tbtn", onclick: e => { e.stopPropagation(); run(async () => {
+    state.revealed[s.fingerprint] = await api(`/api/secret?run=${encodeURIComponent(D.audit.id)}&fingerprint=${encodeURIComponent(s.fingerprint)}`);
+    render(); }); }}, "révéler");
+}
+function noteBox(name) {
+  const text = D.notes[name] || "";
+  if (!LIVE) return text ? h("pre", {class: "snippet"}, text) : null;
+  const key = "note:" + name;
+  const area = h("textarea", {rows: 4, placeholder: "Notes libres sur ce projet (exposition, contexte, pistes…)", value: draft(key, text),
+    oninput: e => { state.drafts[key] = e.target.value; }});
+  return h("div", {}, area, h("div", {class: "triagebox", style: "margin-top:6px"}, h("button", {class: "tbtn on", onclick: e => {
+    e.stopPropagation();
+    run(async () => { await api(`/api/notes/${encodeURIComponent(name)}`, {method: "PUT", body: {text: draft(key, text)}}); delete state.drafts[key]; await refresh(); });
+  }}, "Enregistrer la note")));
+}
+
+let projects, byName, rawDirOf, problems;
+function prepare() {
+  REVEAL = !!D.options.reveal;
+  projects = D.projects;
+  byName = Object.fromEntries(projects.map(p => [p.name, p]));
+  rawDirOf = Object.fromEntries(D.runs.map(r => [`${r.project}|${r.tool}|${r.mode}`, r.raw_dir]));
+  problems = D.runs.filter(r => !["ok", "skipped"].includes(r.status));
+}
+const secretsOf = p => D.secrets.filter(s => s.project === p);
+prepare();
+
+/* ---------- état (reflété dans l'URL pour pouvoir partager une vue) ---------- */
+const state = {tab: "synthese", group: true, project: "", q: "", sort: {}, open: new Set(), modes: new Set(), rule: "", triage: "", onlyProblems: false,
+  sevSast: new Set(), sastTools: new Set(), sastRule: "", sevDeps: new Set(), depsOnlyVuln: false, secretTools: new Set(), vulnTools: new Set(),
+  hideFp: false, crit: "", linkTypes: new Set(), form: null, drafts: {}, revealed: {}, flash: null, run: D.audit.id, diffBase: "", diffData: null,
+  diffShow: "new", job: null, jobTools: {}, jobUnpack: false, jobHistory: false, jobCritiq: false,
+  raw: {tree: null, loading: false, file: null, sub: "resultats", runIdx: 0, sarif: {}, nodes: {}, open: new Set(), mode: {}, rows: {}, text: {},
+        filters: {q: "", rule: "", level: "", file: "", line: "", index: ""}, page: 0, ruleQ: "", ruleOnly: false, rulePage: 0, rowQ: "", rowPage: 0}};
+function loadHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  if (p.get("tab")) state.tab = p.get("tab");
+  if (p.get("project") && byName[p.get("project")]) state.project = p.get("project");
+}
+function saveHash() {
+  const p = new URLSearchParams({tab: state.tab});
+  if (state.project) p.set("project", state.project);
+  history.replaceState(null, "", "#" + p.toString());
+}
+const inScope = r => !state.project || r.project === state.project || (byName[r.project] || {}).parent === state.project;
+const matchesQ = (...parts) => !state.q || parts.join(" ").toLowerCase().includes(state.q.toLowerCase());
+
+/* ---------- tableau triable générique ---------- */
+function table(id, columns, rows, opts = {}) {
+  const sort = state.sort[id] || opts.defaultSort || null;
+  const col = sort && columns.find(c => c.key === sort.key);
+  if (sort && col) {
+    const val = r => (col.sort ? col.sort(r) : r[col.key]);
+    rows = [...rows].sort((a, b) => {
+      const x = val(a), y = val(b);
+      const c = (x ?? "") < (y ?? "") ? -1 : (x ?? "") > (y ?? "") ? 1 : 0;
+      return sort.dir === "desc" ? -c : c;
+    });
+  }
+  const head = h("tr", {}, columns.map(c => h("th", {
+    class: (c.num ? "num " : "") + (c.sortable === false ? "" : "sortable"),
+    onclick: c.sortable === false ? null : () => {
+      const cur = state.sort[id] || opts.defaultSort || {};
+      state.sort[id] = {key: c.key, dir: cur.key === c.key && cur.dir === "asc" ? "desc" : "asc"};
+      render();
+    },
+  }, c.label, sort && sort.key === c.key ? (sort.dir === "asc" ? " ▲" : " ▼") : "")));
+  const body = [];
+  const total = rows.length;
+  if (opts.limit && total > opts.limit) rows = rows.slice(0, opts.limit);
+  for (const r of rows) {
+    const rid = id + ":" + (opts.rowId ? opts.rowId(r) : rows.indexOf(r));
+    const open = state.open.has(rid);
+    body.push(h("tr", {
+      class: "row" + (opts.detail || opts.onRowClick ? " clickable" : ""),
+      onclick: opts.onRowClick ? () => opts.onRowClick(r) : opts.detail ? () => { open ? state.open.delete(rid) : state.open.add(rid); render(); } : null,
+    }, columns.map(c => h("td", {class: (c.num ? "num " : "") + (c.cls || "")}, c.render ? c.render(r) : r[c.key]))));
+    if (open && opts.detail) body.push(h("tr", {class: "detail"}, h("td", {colspan: columns.length}, opts.detail(r))));
+  }
+  return [h("table", {}, h("thead", {}, head), h("tbody", {}, body)),
+    opts.limit && total > opts.limit ? h("div", {class: "empty"}, `Affichage limité aux ${fmt(opts.limit)} premières lignes sur ${fmt(total)} : affinez avec la recherche ou les filtres.`) : null];
+}
+const card = (title, ...kids) => h("div", {class: "card"}, title ? h("h2", {}, title) : null, ...kids);
+const empty = msg => h("div", {class: "empty"}, msg);
+const kv = pairs => h("dl", {class: "kv"}, pairs.filter(([, v]) => v !== null && v !== undefined && v !== "").map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]));
+
+/* ---------- Synthèse ---------- */
+function languageBar(name) {
+  const techs = D.technologies.filter(t => t.project === name).sort((a, b) => b.code - a.code);
+  const total = techs.reduce((s, t) => s + t.code, 0);
+  if (!total) return h("span", {class: "muted"}, "—");
+  return h("div", {}, h("div", {class: "bar"}, techs.map(t => h("span", {
+    title: `${t.language} : ${fmt(t.code)} lignes`, style: `width:${(100 * t.code / total).toFixed(2)}%;background:${color(t.language)}`}))),
+    h("div", {class: "legend"}, techs.slice(0, 3).map(t => `${t.language} ${Math.round(100 * t.code / total)}%`).join(" · ")));
+}
+function viewSynthese() {
+  const scope = projects.filter(p => !state.project || p.name === state.project || p.parent === state.project);
+  const names = new Set(scope.map(p => p.name));
+  const techs = D.technologies.filter(t => names.has(t.project));
+  const secrets = D.secrets.filter(s => names.has(s.project));
+  const byMode = m => secrets.filter(s => s.mode === m).length;
+  const sast = D.sast.filter(f => names.has(f.project));
+  const vulns = D.vulns.filter(v => names.has(v.project));
+  const sevSummary = list => SEV_ORDER.slice(0, 3).map(k => `${SEV_FR[k]} ${list.filter(x => x.severity === k).length}`).join(" · ");
+  const runs = D.runs.filter(r => names.has(r.project));
+  const bad = runs.filter(r => !["ok", "skipped"].includes(r.status));
+  const kpis = h("div", {class: "kpis"},
+    ...[
+      [fmt(scope.length), "Projets", `${scope.filter(p => p.parent).length} issu(s) d'archives · ${scope.filter(p => p.is_git).length} avec .git`],
+      [fmt(techs.reduce((s, t) => s + t.code, 0)), "Lignes de code", `${new Set(techs.map(t => t.language)).size} langages`],
+      [fmt(nGroups(secrets)), "Secrets détectés", `dir ${byMode("dir")} · git ${byMode("git")} · history ${byMode("history")}${recoup(secrets)}`],
+      [fmt(nGroups(sast)), "Failles de code (SAST)", `${sevSummary(groupRows(sast))}${recoup(sast)}`],
+      [fmt(nGroups(vulns)), "Dépendances vulnérables", `${fmt(D.deps.filter(d => names.has(d.project)).length)} composants · ${sevSummary(groupRows(vulns))}${recoup(vulns)}`],
+      [fmt(D.commits.filter(c => names.has(c.project)).length), "Commits extraits", "gittools"],
+      [fmt(bad.length), "Exécutions à examiner", `${runs.filter(r => r.status === "ok").length} ok sur ${runs.length}`],
+    ].map(([v, l, d]) => h("div", {class: "kpi"}, h("div", {class: "v"}, v), h("div", {class: "l"}, l), h("div", {class: "d"}, d))));
+  const rows = scope.map(p => ({...p, secrets: groupRows(secretsOf(p.name)), runs: D.runs.filter(r => r.project === p.name),
+    sast: groupRows(D.sast.filter(f => f.project === p.name)), vulns: groupRows(D.vulns.filter(v => v.project === p.name))}));
+  const worst = list => list.reduce((m, x) => Math.max(m, SEV_RANK[x.severity] ?? 0), -1);
+  const sevCell = list => list.length ? chip(String(list.length), worst(list) >= 3 ? "bad" : worst(list) === 2 ? "warn" : "") : chip("0", "ok");
+  const t = table("synthese", [
+    {key: "name", label: "Projet", render: r => h("div", {}, r.parent ? h("span", {class: "indent"}, "↳") : null, h("strong", {}, r.name),
+        h("div", {class: "muted mono"}, r.origin ? "archive : " + r.origin : r.path))},
+    {key: "is_git", label: "Git", sort: r => +r.is_git, render: r => r.is_git ? chip(r.head_commit ? short(r.head_commit) : ".git", "accent") : chip("non")},
+    {key: "lang", label: "Technologies", sortable: false, render: r => languageBar(r.name)},
+    {key: "nsec", label: "Secrets", num: true, sort: r => r.secrets.length, render: r => r.secrets.length
+      ? ["dir", "git", "history"].map(m => { const n = r.secrets.filter(s => s.mode === m).length; return n ? chip(`${m} ${n}`, "bad") : null; })
+      : chip("0", "ok")},
+    {key: "nsast", label: "SAST", num: true, sort: r => r.sast.length, render: r => sevCell(r.sast)},
+    {key: "nvuln", label: "Dépendances vuln.", num: true, sort: r => r.vulns.length, render: r => sevCell(r.vulns)},
+    {key: "runs", label: "Exécutions", sort: r => r.runs.filter(x => !["ok", "skipped"].includes(x.status)).length,
+      render: r => r.runs.filter(x => x.status !== "skipped").map(x => chip(`${x.tool}/${x.mode}`, STATUS[x.status]))},
+  ], rows, {defaultSort: {key: "name", dir: "asc"}, rowId: r => r.name,
+    detail: r => kv([["Chemin", h("span", {class: "mono"}, r.path)], ["Commit HEAD", r.head_commit], ["Projet d'origine", r.parent], ["Archive", r.origin],
+      ["Constats", D.findings.filter(f => f.project === r.name).length || null], ["Notes de l'auditeur", noteBox(r.name)]])});
+  return [kpis, card("Projets", rows.length ? t : empty("Aucun projet"))];
+}
+
+/* ---------- Technologies ---------- */
+function viewTech() {
+  const scope = D.technologies.filter(inScope).filter(t => matchesQ(t.language, t.project));
+  const agg = {};
+  for (const t of scope) {
+    const a = agg[t.language] ||= {language: t.language, projects: new Set(), files: 0, code: 0, comment: 0, blank: 0};
+    a.projects.add(t.project); a.files += t.files; a.code += t.code; a.comment += t.comment; a.blank += t.blank;
+  }
+  const rows = Object.values(agg).map(a => ({...a, nproj: a.projects.size}));
+  const total = rows.reduce((s, r) => s + r.code, 0) || 1;
+  const main = table("tech", [
+    {key: "language", label: "Langage", render: r => [h("span", {class: "chip", style: `background:${color(r.language)};color:#fff`}, "\u00a0"), " ", r.language]},
+    {key: "nproj", label: "Projets", num: true},
+    {key: "files", label: "Fichiers", num: true, render: r => fmt(r.files)},
+    {key: "code", label: "Code", num: true, render: r => fmt(r.code)},
+    {key: "comment", label: "Commentaires", num: true, render: r => fmt(r.comment)},
+    {key: "blank", label: "Vides", num: true, render: r => fmt(r.blank)},
+    {key: "share", label: "Part", sort: r => r.code, render: r => h("div", {class: "bar"}, h("span", {style: `width:${100 * r.code / total}%;background:${color(r.language)}`}))},
+  ], rows, {defaultSort: {key: "code", dir: "desc"}});
+  const top = rows.sort((a, b) => b.code - a.code).slice(0, 8).map(r => r.language);
+  const matrix = [];
+  if (!state.project && top.length) {
+    const names = [...new Set(scope.map(t => t.project))].sort();
+    const cell = (p, l) => (scope.find(t => t.project === p && t.language === l) || {code: 0}).code;
+    matrix.push(card("Lignes de code par projet", h("table", {},
+      h("thead", {}, h("tr", {}, h("th", {}, "Projet"), top.map(l => h("th", {class: "num"}, l)))),
+      h("tbody", {}, names.map(p => h("tr", {}, h("td", {}, p), top.map(l => h("td", {class: "num"}, cell(p, l) ? fmt(cell(p, l)) : h("span", {class: "muted"}, "·")))))))));
+  }
+  return [card(`Technologies (${rows.length})`, rows.length ? main : empty("Aucune donnée cloc pour ce périmètre.")), ...matrix];
+}
+
+/* ---------- Secrets ---------- */
+function viewSecrets() {
+  const all = D.secrets.filter(inScope);
+  const rules = [...new Set(all.map(s => s.rule_id))].sort();
+  const tools = [...new Set(all.map(s => s.tool))].sort();
+  const rows = all.filter(s => notFp(s) && (!state.modes.size || state.modes.has(s.mode)) && (!state.secretTools.size || state.secretTools.has(s.tool))
+    && (!state.rule || s.rule_id === state.rule) && (!state.triage || (s.triage || "none") === state.triage)
+    && matchesQ(s.project, s.file, s.rule_id, s.tool, s.commit, s.author, s.description, (clearOf(s) || {}).secret || ""));
+  const view = groupRows(rows);
+  const modeBtns = ["dir", "git", "history"].map(m => h("button", {class: "toggle", "aria-pressed": state.modes.has(m),
+    onclick: () => { state.modes.has(m) ? state.modes.delete(m) : state.modes.add(m); render(); }},
+    `${m} (${all.filter(s => s.mode === m).length})`));
+  const toolBtns = tools.length > 1 ? tools.map(t => h("button", {class: "toggle", "aria-pressed": state.secretTools.has(t),
+    onclick: () => { state.secretTools.has(t) ? state.secretTools.delete(t) : state.secretTools.add(t); render(); }},
+    `${t} (${all.filter(s => s.tool === t).length})`)) : [];
+  const filters = h("div", {class: "filters"}, modeBtns, toolBtns,
+    selectOf(state.rule, [["", "Toutes les règles"], ...rules.map(r => [r, r])], v => state.rule = v),
+    selectOf(state.triage, [["", "Tout triage"], ["none", "non trié"], ...TRIAGE_STATES], v => state.triage = v), fpToggle(),
+    h("span", {class: "muted"}, countText(rows, view, all, "résultat")));
+  const detail = s => {
+    const c = clearOf(s);
+    return kv([
+      LIVE ? ["Triage", triageBox(s)] : ["Commentaire de triage", s.triage_comment],
+      ["Avis du modèle d'IA", critBox(s)], ["Détections regroupées", membersBlock(s)],
+      ["Description", s.description], ["Outil", s.tool],
+      c ? ["Valeur en clair", h("span", {}, h("span", {class: "secret"}, c.secret), copyBtn(c.secret))] : ["Valeur masquée", h("span", {}, h("span", {class: "mono"}, s.secret_masked), revealBtn(s))],
+      c && c.match ? ["Ligne en clair", h("span", {class: "secret"}, c.match)] : ["Extrait masqué", s.match_masked ? h("span", {class: "mono"}, s.match_masked) : null],
+      ["Auteur", s.author ? `${s.author}${s.email ? " <" + s.email + ">" : ""}` : null], ["Date", s.date], ["Message", s.commit_message],
+      ["Vérifié actif", s.verified ? "oui (testé auprès du service)" : null],
+      ["Entropie", s.entropy], ["Empreinte (triage)", h("span", {class: "mono"}, s.fingerprint)],
+      ["Hash du secret", h("span", {class: "mono"}, s.secret_sha256)],
+      s.mode === "history" ? ["Présent dans", `${s.commits_count} commit(s) : ${(s.commits || []).slice(0, 10).map(short).join(", ")}${s.commits_count > 10 ? "…" : ""}`] : ["", null],
+      ["Sortie brute", s.raw_report ? h("span", {}, h("span", {class: "mono"}, s.raw_report), ` — entrée n°${s.raw_index}`, copyBtn(s.raw_report)) : null],
+      LIVE ? ["", h("div", {class: "triagebox"}, findingButton(s, "secret"), rawLinkBtn(s, "secret"), codeLinkBtn(s, "secret"))] : ["", null],
+    ].filter(x => x[0] !== "" || (x[1] && x[1] !== null)).map(x => x[0] === "" ? ["Actions", x[1]] : x));
+  };
+  const t = table("secrets", [
+    {key: "project", label: "Projet"},
+    {key: "tool", label: "Outil", render: s => uniqOf(s, x => x.tool).map(t => chip(t))},
+    {key: "mode", label: "Mode", render: s => uniqOf(s, x => x.mode).map(m => chip(m, m === "dir" ? "warn" : "accent"))},
+    {key: "rule_id", label: "Règle"},
+    {key: "file", label: "Fichier", cls: "mono", render: s => s.file},
+    {key: "start_line", label: "Ligne", num: true},
+    {key: "commit", label: "Commit", cls: "mono", render: s => short(s.commit) || "—"},
+    {key: "secret_masked", label: REVEAL ? "Valeur (en clair)" : "Valeur", cls: "mono", sortable: false,
+      render: s => { const c = clearOf(s); return c ? h("span", {class: "secret"}, c.secret) : s.secret_masked; }},
+    {key: "triage", label: "Triage", render: s => triageChip(s.triage)},
+    ...(hasCrit() ? [{key: "critique", label: "IA", sort: s => (s.critique || {}).verdict || "", render: s => critChip(s.critique) || ""}] : []),
+    ...groupCol(view),
+  ], view, {defaultSort: {key: "project", dir: "asc"}, rowId: s => state.group && s.cluster ? s.cluster.id : s.fingerprint, detail});
+  return [filters, bulkBar(view), card(null, rows.length ? t : empty(all.length ? "Aucun résultat pour ces filtres." : "Aucun secret détecté."))];
+}
+
+
+/* ---------- Code (SAST) ---------- */
+const sevToggles = (set, list) => SEV_ORDER.map(k => h("button", {class: "toggle", "aria-pressed": set.has(k),
+  onclick: () => { set.has(k) ? set.delete(k) : set.add(k); render(); }}, `${SEV_FR[k]} (${list.filter(x => x.severity === k).length})`));
+const selectOf = (value, opts, onchange) => {
+  const s = h("select", {onchange: e => { onchange(e.target.value); render(); }}, opts.map(([v, l]) => h("option", {value: v}, l)));
+  s.value = value; return s;
+};
+function viewSast() {
+  const all = D.sast.filter(inScope);
+  const rules = [...new Set(all.map(f => f.rule_id))].sort();
+  const toolOf = f => f.tool || "?";
+  const tools = [...new Set(all.map(toolOf))].sort();
+  const rows = all.filter(f => notFp(f) && (!state.sevSast.size || state.sevSast.has(f.severity)) && (!state.sastTools.size || state.sastTools.has(toolOf(f)))
+    && (!state.sastRule || f.rule_id === state.sastRule)
+    && matchesQ(f.project, f.file, f.rule_id, f.message, toolOf(f), (f.cwe || []).join(" "), f.snippet));
+  const view = groupRows(rows);
+  const toolBtns = tools.length > 1 ? tools.map(t => h("button", {class: "toggle", "aria-pressed": state.sastTools.has(t),
+    onclick: () => { state.sastTools.has(t) ? state.sastTools.delete(t) : state.sastTools.add(t); render(); }},
+    `${t} (${all.filter(f => toolOf(f) === t).length})`)) : [];
+  const filters = h("div", {class: "filters"}, sevToggles(state.sevSast, all), toolBtns,
+    selectOf(state.sastRule, [["", "Toutes les règles"], ...rules.map(r => [r, r])], v => state.sastRule = v), fpToggle(),
+    h("span", {class: "muted"}, countText(rows, view, all, "résultat")));
+  const detail = f => {
+    return kv([
+      LIVE ? ["Triage", triageBox(f)] : ["Commentaire de triage", f.triage_comment],
+      ["Avis du modèle d'IA", critBox(f)], ["Détections regroupées", membersBlock(f)],
+      ["Outil", f.tool ? `${f.tool}${f.language ? " · " + f.language : ""}` : null],
+      ["Message", f.message], ["Règle", h("span", {class: "mono"}, f.rule_id)], ["Nom", f.rule_name],
+      ["Emplacement", h("span", {class: "mono"}, `${f.file}:${f.start_line ?? "?"}${f.end_line && f.end_line !== f.start_line ? "-" + f.end_line : ""}`)],
+      ["Code", f.snippet ? h("pre", {class: "snippet"}, f.snippet) : null],
+      ["Chemin de données", (f.flow || []).length ? h("ol", {class: "flow"}, f.flow.map(st => h("li", {},
+        h("span", {class: "mono"}, `${st.file}:${st.line ?? "?"}`), st.message ? " — " + st.message : ""))) : null],
+      ["CWE", (f.cwe || []).join(", ")], ["OWASP", (f.owasp || []).join(" · ")], ["Confiance", f.confidence],
+      ["Étiquettes", (f.tags || []).join(", ")], ["Aide", f.help_uri], ["Empreinte (triage)", h("span", {class: "mono"}, f.fingerprint)],
+      ["Sortie brute", f.raw_report ? h("span", {}, h("span", {class: "mono"}, f.raw_report), copyBtn(f.raw_report)) : null],
+      ["Résultat complet (sortie brute)", f.raw_detail ? sarifDetail(f.raw_detail) : null],
+      ["Actions", h("div", {class: "triagebox"}, findingButton(f, "sast"), rawLinkBtn(f, "sast"), codeLinkBtn(f, "sast"))],
+    ]);
+  };
+  const t = table("sast", [
+    {key: "project", label: "Projet"},
+    {key: "severity", label: "Sévérité", sort: f => SEV_RANK[f.severity] ?? -1, render: f => sevChip(f.severity)},
+    {key: "tool", label: "Outil", render: f => uniqOf(f, toolOf).map(t => chip(t, "accent"))},
+    {key: "rule_id", label: "Règle", cls: "mono"},
+    {key: "file", label: "Fichier", cls: "mono", render: f => `${f.file}:${f.start_line ?? ""}`},
+    {key: "cwe", label: "CWE", sort: f => (f.cwe || []).join(), render: f => (f.cwe || []).map(c => chip(c))},
+    {key: "message", label: "Message", render: f => (f.message || "").slice(0, 140)},
+    {key: "triage", label: "Triage", render: f => triageChip(f.triage)},
+    ...(hasCrit() ? [{key: "critique", label: "IA", sort: f => (f.critique || {}).verdict || "", render: f => critChip(f.critique) || ""}] : []),
+    ...groupCol(view),
+  ], view, {defaultSort: {key: "severity", dir: "desc"}, rowId: f => state.group && f.cluster ? f.cluster.id : f.fingerprint, detail, limit: 1500});
+  const ranTools = [...new Set(D.runs.filter(r => ["opengrep", "codeql"].includes(r.tool) && r.status === "ok").map(r => r.tool))];
+  const none = all.length ? "Aucun résultat pour ces filtres."
+    : (ranTools.length ? `Aucune faille détectée (${ranTools.join(", ")}).`
+      : "Aucun outil SAST n'a été lancé (--with opengrep et/ou --with codeql, après `aule update`).");
+  return [filters, bulkBar(view), card(null, rows.length ? t : empty(none))];
+}
+
+/* ---------- Dépendances ---------- */
+const cveLink = id => /^CVE-\d{4}-\d{4,}$/.test(id)
+  ? h("a", {href: "https://nvd.nist.gov/vuln/detail/" + id, target: "_blank", rel: "noopener noreferrer", onclick: e => e.stopPropagation()}, id) : id;
+function viewDeps() {
+  const allV = D.vulns.filter(inScope);
+  const vtools = [...new Set(allV.map(v => v.tool))].sort();
+  const vrows = allV.filter(v => notFp(v) && (!state.sevDeps.size || state.sevDeps.has(v.severity)) && (!state.vulnTools.size || state.vulnTools.has(v.tool))
+    && matchesQ(v.project, v.id, v.tool, v.dependency.name, v.dependency.file, (v.cwes || []).join(" "), v.description));
+  const vview = groupRows(vrows);
+  const toolBtns = vtools.length > 1 ? vtools.map(t => h("button", {class: "toggle", "aria-pressed": state.vulnTools.has(t),
+    onclick: () => { state.vulnTools.has(t) ? state.vulnTools.delete(t) : state.vulnTools.add(t); render(); }},
+    `${t} (${allV.filter(v => v.tool === t).length})`)) : [];
+  const filters = h("div", {class: "filters"}, sevToggles(state.sevDeps, allV), toolBtns, fpToggle(),
+    h("span", {class: "muted"}, countText(vrows, vview, allV, "vulnérabilité")));
+  const vt = table("vulns", [
+    {key: "project", label: "Projet"},
+    {key: "severity", label: "Sévérité", sort: v => SEV_RANK[v.severity] ?? -1, render: v => sevChip(v.severity)},
+    {key: "tool", label: "Outil", render: v => uniqOf(v, x => x.tool).map(t => chip(t, "accent"))},
+    {key: "id", label: "Identifiant", cls: "mono", render: v => cveLink(v.id)},
+    {key: "cvss_score", label: "CVSS", num: true, render: v => v.cvss_score ?? "—"},
+    {key: "component", label: "Composant", sort: v => v.dependency.name || "", render: v => v.dependency.name},
+    {key: "version", label: "Version", sort: v => v.dependency.version || "", render: v => v.dependency.version || "—"},
+    {key: "file", label: "Fichier", cls: "mono", sort: v => v.dependency.file || "", render: v => v.dependency.file},
+    {key: "triage", label: "Triage", render: v => triageChip(v.triage)},
+    ...(hasCrit() ? [{key: "critique", label: "IA", sort: v => (v.critique || {}).verdict || "", render: v => critChip(v.critique) || ""}] : []),
+    ...groupCol(vview),
+  ], vview, {defaultSort: {key: "severity", dir: "desc"}, rowId: v => state.group && v.cluster ? v.cluster.id : v.fingerprint, limit: 1500,
+    detail: v => kv([LIVE ? ["Triage", triageBox(v)] : ["Commentaire de triage", v.triage_comment], ["Avis du modèle d'IA", critBox(v)], ["Détections regroupées", membersBlock(v)],
+      ["Description", v.description], ["Outil", v.tool], ["Source", v.source], ["CWE", (v.cwes || []).join(", ")],
+      ["Autres identifiants", (v.aliases || []).join(", ")], ["Correctif", v.fixed_version],
+      ["CVSS", v.cvss_score != null ? `${v.cvss_score}${v.cvss_version ? " (v" + v.cvss_version + ")" : ""}` : null], ["Composant", h("span", {class: "mono"}, v.dependency.purl || v.dependency.name)],
+      ["Références", (v.references || []).length ? h("div", {}, v.references.map(u => h("div", {class: "mono"}, u))) : null],
+      ["Empreinte (triage)", h("span", {class: "mono"}, v.fingerprint)],
+      ["Sortie brute", v.raw_report ? h("span", {}, h("span", {class: "mono"}, v.raw_report), copyBtn(v.raw_report)) : null],
+      ["Actions", h("div", {class: "triagebox"}, findingButton(v, "vuln"), rawLinkBtn(v, "vuln"), codeLinkBtn(v, "vuln"))]])});
+
+  const allD = D.deps.filter(inScope);
+  const drows = allD.filter(d => (!state.depsOnlyVuln || d.vulnerability_count > 0) && matchesQ(d.project, d.name, d.version, d.file, d.type));
+  const dfilters = h("div", {class: "filters"},
+    h("button", {class: "toggle", "aria-pressed": state.depsOnlyVuln, onclick: () => { state.depsOnlyVuln = !state.depsOnlyVuln; render(); }},
+      `Vulnérables seulement (${allD.filter(d => d.vulnerability_count > 0).length})`),
+    h("span", {class: "muted"}, `${drows.length} composant(s) sur ${allD.length}`));
+  const dt = table("deps", [
+    {key: "project", label: "Projet"},
+    {key: "name", label: "Composant", render: d => d.name},
+    {key: "version", label: "Version", render: d => d.version || "—"},
+    {key: "type", label: "Type", render: d => d.type ? chip(d.type) : "—"},
+    {key: "vulnerability_count", label: "Vulnérabilités", num: true, render: d => d.vulnerability_count ? chip(String(d.vulnerability_count), "bad") : chip("0", "ok")},
+    {key: "license", label: "Licence", render: d => d.license ? String(d.license).slice(0, 60) : "—"},
+    {key: "file", label: "Fichier", cls: "mono"},
+  ], drows, {defaultSort: {key: "vulnerability_count", dir: "desc"}, rowId: d => d.project + (d.purl || d.file) + d.name + d.version, limit: 1000});
+
+  const ran = D.runs.some(r => ["dependency-check", "osv-scanner", "trivy"].includes(r.tool) && r.status === "ok");
+  return [filters, bulkBar(vview), card(`Vulnérabilités (${nGroups(allV)}${state.group && nGroups(allV) !== allV.length ? " constats · " + allV.length + " détections" : ""})`, vrows.length ? vt : empty(allV.length ? "Aucun résultat pour ces filtres."
+      : ran ? "Aucune vulnérabilité connue détectée." : "Aucun outil de dépendances n'a été lancé (--with dependency-check, osv-scanner ou trivy).")),
+    allD.length ? [dfilters, card(`Composants (${allD.length})`, drows.length ? dt : empty("Aucun composant."))] : null];
+}
+
+/* ---------- Historique ---------- */
+function viewHistory() {
+  const commits = D.commits.filter(inScope).filter(c => matchesQ(c.project, c.hash, c.author, c.message));
+  if (!D.commits.length) {
+    return card("Historique", empty("Aucun historique extrait. Lancez l'audit avec --history (outil gittools) pour reconstruire les commits d'un .git, y compris dans les archives (--unpack)."));
+  }
+  const touching = c => D.secrets.filter(s => s.project === c.project && (s.commit === c.hash || (s.commits || []).includes(c.hash))).length;
+  const rows = commits.map(c => ({...c, nsec: touching(c)}));
+  const t = table("history", [
+    {key: "project", label: "Projet"},
+    {key: "index", label: "#", num: true},
+    {key: "hash", label: "Commit", cls: "mono", render: c => short(c.hash)},
+    {key: "date", label: "Date", render: c => c.date ? c.date.replace("T", " ").slice(0, 16) : "—"},
+    {key: "author", label: "Auteur", render: c => c.author || "—"},
+    {key: "message", label: "Message", render: c => (c.message || "").split("\n")[0].slice(0, 120)},
+    {key: "nsec", label: "Secrets", num: true, render: c => c.nsec ? chip(String(c.nsec), "bad") : chip("0", "ok")},
+  ], rows, {defaultSort: {key: "date", dir: "desc"}, rowId: c => c.project + c.hash,
+    detail: c => kv([["Commit", h("span", {class: "mono"}, c.hash)], ["Parents", (c.parents || []).map(short).join(", ")], ["Tree", c.tree],
+      ["Auteur", c.author ? `${c.author} <${c.author_email || ""}>` : null], ["Message", c.message], ["Dossier extrait", c.dir]])});
+  return card(`Commits reconstruits (${rows.length})`, rows.length ? t : empty("Aucun résultat."));
+}
+
+/* ---------- Exécutions ---------- */
+function viewRuns() {
+  const all = D.runs.filter(inScope).filter(r => r.status !== "skipped" || !state.onlyProblems);
+  const rows = all.filter(r => (!state.onlyProblems || !["ok", "skipped"].includes(r.status)) && matchesQ(r.project, r.tool, r.mode, r.error));
+  const filters = h("div", {class: "filters"},
+    h("button", {class: "toggle", "aria-pressed": state.onlyProblems, onclick: () => { state.onlyProblems = !state.onlyProblems; render(); }},
+      `À examiner seulement (${problems.filter(inScope).length})`),
+    h("span", {class: "muted"}, `${rows.length} exécution(s)`));
+  const t = table("runs", [
+    {key: "project", label: "Projet"},
+    {key: "tool", label: "Outil", render: r => `${r.tool} / ${r.mode}`, sort: r => r.tool + r.mode},
+    {key: "status", label: "Statut", render: r => chip(STATUS_FR[r.status] || r.status, STATUS[r.status])},
+    {key: "exit_code", label: "Code", num: true, render: r => r.exit_code ?? "—"},
+    {key: "duration_s", label: "Durée", num: true, render: r => r.duration_s != null ? r.duration_s + " s" : "—"},
+    {key: "tool_version", label: "Version", render: r => r.tool_version || "—"},
+    {key: "raw_dir", label: "Sortie brute", cls: "mono", render: r => r.raw_dir ? [r.raw_dir, copyBtn(r.raw_dir)] : "—"},
+    {key: "error", label: "Détail", render: r => r.error ? h("span", {class: r.status === "skipped" ? "muted" : ""}, r.error) : ""},
+  ], rows, {defaultSort: {key: "status", dir: "desc"}, rowId: r => `${r.project}|${r.tool}|${r.mode}`,
+    detail: r => kv([["Commande", r.command ? h("span", {class: "mono"}, r.command) : null], ["Démarrée", r.started_at], ["SHA-256 du rapport", r.report_sha256 ? h("span", {class: "mono"}, r.report_sha256) : null], ["Erreur", r.error]])});
+  return [filters, card(null, rows.length ? t : empty("Rien à afficher."))];
+}
+
+/* ---------- Liens entre projets ---------- */
+const REL_FR = {depends_on: "dépend de", shared_secret: "secret partagé", same_remote: "même dépôt d'origine", shared_endpoint: "hôte commun", extracted_from: "extrait de"};
+const REL_COLOR = {depends_on: "#3b5bdb", shared_secret: "#c92a2a", same_remote: "#2b8a3e", shared_endpoint: "#e8590c", extracted_from: "#868e96"};
+const DIRECTED = new Set(["depends_on", "extracted_from"]);
+function relDetail(r) {
+  if (r.type === "depends_on") return `via ${(r.via || []).join(", ")}`;
+  if (r.type === "shared_secret") return `${r.count} secret(s) : ` + (r.secrets || []).map(x => `${x.rule} ${x.masked}`).join(", ");
+  if (r.type === "same_remote") return r.remote;
+  if (r.type === "shared_endpoint") return `${r.count} hôte(s) : ` + (r.hosts || []).join(", ");
+  if (r.type === "extracted_from") return `archive ${r.archive}`;
+  return "";
+}
+function forceLayout(n, edges, W, H) {  // déterministe : mêmes données, même dessin
+  const pos = Array.from({length: n}, (_, i) => ({x: W / 2 + Math.cos(2 * Math.PI * i / n) * W * 0.35, y: H / 2 + Math.sin(2 * Math.PI * i / n) * H * 0.35, vx: 0, vy: 0}));
+  const k = Math.sqrt((W * H) / Math.max(n, 1)) * 0.8;
+  for (let it = 0; it < 220; it++) {
+    const t = 1 - it / 220;
+    for (const q of pos) { q.vx = 0; q.vy = 0; }
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      let dx = pos[i].x - pos[j].x, dy = pos[i].y - pos[j].y; const d = Math.max(Math.hypot(dx, dy), 0.01);
+      const f = (k * k) / d; dx /= d; dy /= d;
+      pos[i].vx += dx * f; pos[i].vy += dy * f; pos[j].vx -= dx * f; pos[j].vy -= dy * f;
+    }
+    for (const [i, j] of edges) {
+      let dx = pos[i].x - pos[j].x, dy = pos[i].y - pos[j].y; const d = Math.max(Math.hypot(dx, dy), 0.01);
+      const f = (d * d) / k; dx /= d; dy /= d;
+      pos[i].vx -= dx * f; pos[i].vy -= dy * f; pos[j].vx += dx * f; pos[j].vy += dy * f;
+    }
+    for (const q of pos) {
+      const m = Math.hypot(q.vx, q.vy) || 1, step = Math.min(m, 40 * t + 2);
+      q.x = Math.min(W - 70, Math.max(70, q.x + q.vx / m * step)); q.y = Math.min(H - 25, Math.max(25, q.y + q.vy / m * step));
+    }
+  }
+  return pos;
+}
+function viewLinks() {
+  const base = D.relations.filter(r => !state.project || r.src === state.project || r.dst === state.project);
+  const types = [...new Set(D.relations.map(r => r.type))];
+  const rels = base.filter(r => (!state.linkTypes.size || state.linkTypes.has(r.type)) && matchesQ(r.src, r.dst, REL_FR[r.type], relDetail(r)));
+  const legend = h("div", {class: "filters"}, types.map(t => h("button", {class: "toggle", "aria-pressed": state.linkTypes.has(t),
+    style: `border-left:4px solid ${REL_COLOR[t] || "#999"}`, onclick: () => { state.linkTypes.has(t) ? state.linkTypes.delete(t) : state.linkTypes.add(t); render(); }},
+    `${REL_FR[t] || t} (${base.filter(r => r.type === t).length})`)), h("span", {class: "muted"}, `${rels.length} lien(s)`));
+  if (!D.relations.length) return card("Liens entre projets", empty("Aucun lien détecté (dépendances, dépôt d'origine, secrets ou hôtes partagés). L'outil « links » est actif par défaut ; il lit manifestes, .git/config et URL."));
+  const names = [...new Set(rels.flatMap(r => [r.src, r.dst]))].sort();
+  const idx = Object.fromEntries(names.map((nm, i) => [nm, i]));
+  const W = 900, Ht = 480, pos = names.length ? forceLayout(names.length, rels.map(r => [idx[r.src], idx[r.dst]]), W, Ht) : [];
+  const perPair = {};
+  const lines = rels.map(r => {
+    const key = [r.src, r.dst].sort().join("|"), n = perPair[key] = (perPair[key] ?? -1) + 1;
+    const a = pos[idx[r.src]], b = pos[idx[r.dst]], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, off = (n - 1.5) * 7;
+    const ox = -dy / d * off, oy = dx / d * off;
+    return svg("line", {x1: (a.x + ox).toFixed(1), y1: (a.y + oy).toFixed(1), x2: (b.x + ox - dx / d * 9).toFixed(1), y2: (b.y + oy - dy / d * 9).toFixed(1),
+      stroke: REL_COLOR[r.type] || "#999", "stroke-width": 2, "marker-end": DIRECTED.has(r.type) ? "url(#arrow)" : null}, svg("title", {}, `${r.src} → ${r.dst} : ${REL_FR[r.type] || r.type}`));
+  });
+  const nodes = names.map((nm, i) => svg("g", {class: "node", onclick: () => { state.project = nm; render(); }},
+    svg("circle", {cx: pos[i].x.toFixed(1), cy: pos[i].y.toFixed(1), r: 8, fill: (byName[nm] || {}).parent ? "#868e96" : "#3b5bdb", stroke: "#fff", "stroke-width": 2}),
+    svg("text", {x: pos[i].x.toFixed(1), y: (pos[i].y - 13).toFixed(1), "text-anchor": "middle"}, nm.length > 26 ? nm.slice(0, 25) + "…" : nm)));
+  const graph = names.length ? svg("svg", {class: "graph", viewBox: `0 0 ${W} ${Ht}`, role: "img", "aria-label": "Graphe des liens entre projets"},
+    svg("defs", {}, svg("marker", {id: "arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse"},
+      svg("path", {d: "M 0 0 L 10 5 L 0 10 z", fill: "context-stroke"}))), lines, nodes) : null;
+  const t = table("links", [
+    {key: "type", label: "Lien", render: r => h("span", {class: "chip", style: `border-left:4px solid ${REL_COLOR[r.type] || "#999"}`}, REL_FR[r.type] || r.type)},
+    {key: "src", label: "Projets", sort: r => r.src + r.dst, render: r => `${r.src} ${DIRECTED.has(r.type) ? "→" : "↔"} ${r.dst}`},
+    {key: "detail", label: "Détail", sort: r => relDetail(r), render: r => relDetail(r)},
+  ], rels, {defaultSort: {key: "type", dir: "asc"}, rowId: r => `${r.type}|${r.src}|${r.dst}`, limit: 1500,
+    detail: r => kv([["Type", REL_FR[r.type] || r.type], ["De", r.src], ["Vers", r.dst], ["Détail", relDetail(r)]])});
+  return [legend, graph ? card(`Graphe (${names.length} projet(s) ; cliquer un projet pour filtrer)`, graph) : null, card("Liens", rels.length ? t : empty("Aucun lien pour ces filtres."))];
+}
+
+/* ---------- Constats de l'auditeur ---------- */
+const FINDING_STATUS_FR = {draft: "brouillon", confirmed: "confirmé", dismissed: "écarté"};
+function refLabel(ref) {
+  const hit = D.secrets.find(x => x.fingerprint === ref) || D.sast.find(x => x.fingerprint === ref) || D.vulns.find(x => x.fingerprint === ref);
+  if (!hit) return ref;
+  return `${hit.project} · ${hit.rule_id || hit.id} · ${hit.file || (hit.dependency || {}).file || ""}${hit.start_line ? ":" + hit.start_line : ""}`;
+}
+function findingForm() {
+  const f = state.form, K = k => `f:${k}`;
+  const set = (k, v) => { state.drafts[K(k)] = v; };
+  const projectNames = [...new Set([...projects.map(x => x.name), f.project])];
+  const project = h("select", {value: draft(K("project"), f.project), onchange: e => set("project", e.target.value)}, projectNames.map(n => h("option", {value: n}, n)));
+  const title = textInput(K("title"), f.title, {placeholder: "Titre du constat"});
+  const severity = h("select", {value: draft(K("severity"), f.severity), onchange: e => set("severity", e.target.value)}, SEV_ORDER.map(x => h("option", {value: x}, SEV_FR[x])));
+  const status = h("select", {value: draft(K("status"), f.status), onchange: e => set("status", e.target.value)}, Object.entries(FINDING_STATUS_FR).map(([v, l]) => h("option", {value: v}, l)));
+  const area = (k, init, rows, ph) => h("textarea", {rows, placeholder: ph, value: draft(K(k), init), oninput: e => set(k, e.target.value)});
+  const description = area("description", f.description, 8, "Description, impact, preuves, recommandation…");
+  const refs = area("refs", f.refs.join("\n"), 3, "Une référence par ligne : empreinte d'un résultat automatique, chemin:ligne, commit…");
+  const save = () => run(async () => {
+    const body = {project: draft(K("project"), f.project), title: draft(K("title"), f.title), severity: draft(K("severity"), f.severity),
+      status: draft(K("status"), f.status), description: draft(K("description"), f.description),
+      refs: draft(K("refs"), f.refs.join("\n")).split("\n").map(x => x.trim()).filter(Boolean)};
+    await api(f.id ? `/api/findings/${f.id}` : "/api/findings", {method: f.id ? "PUT" : "POST", body});
+    state.form = null;
+    state.drafts = Object.fromEntries(Object.entries(state.drafts).filter(([k]) => !k.startsWith("f:")));
+    await refresh();
+  });
+  return card(f.id ? `Modifier le constat #${f.id}` : "Nouveau constat", h("div", {class: "form"},
+    labelled("Projet", project), labelled("Titre", title), h("div", {class: "filters"}, labelled("Sévérité", severity), labelled("Statut", status)),
+    labelled("Description", description), labelled("Références", refs),
+    h("div", {class: "triagebox"}, h("button", {class: "tbtn on", onclick: save}, "Enregistrer"),
+      h("button", {class: "tbtn", onclick: () => { state.form = null; render(); }}, "Annuler"))));
+}
+function viewFindings() {
+  const rows = D.findings.filter(f => (!state.project || f.project === state.project) && matchesQ(f.project, f.title, f.description));
+  const head = LIVE ? h("div", {class: "filters"}, h("button", {class: "tbtn on", onclick: () => {
+    state.form = {id: null, project: state.project || (projects[0] || {}).name || "", title: "", severity: "medium", status: "draft", description: "", refs: []};
+    state.drafts = Object.fromEntries(Object.entries(state.drafts).filter(([k]) => !k.startsWith("f:")));
+    render();
+  }}, "+ Nouveau constat"), h("span", {class: "muted"}, "Les constats sont indépendants des runs : ils survivent aux relances. Export : aule export.")) : null;
+  const t = table("findings", [
+    {key: "id", label: "#", num: true, render: f => `#${f.id}`},
+    {key: "project", label: "Projet"},
+    {key: "severity", label: "Sévérité", sort: f => SEV_RANK[f.severity] ?? -1, render: f => sevChip(f.severity)},
+    {key: "status", label: "Statut", render: f => chip(FINDING_STATUS_FR[f.status] || f.status, f.status === "confirmed" ? "bad" : f.status === "dismissed" ? "ok" : "")},
+    {key: "title", label: "Titre"},
+    {key: "updated_at", label: "Modifié", render: f => (f.updated_at || "").replace("T", " ").slice(0, 16)},
+  ], rows, {defaultSort: {key: "severity", dir: "desc"}, rowId: f => String(f.id),
+    detail: f => kv([["Description", f.description ? h("pre", {class: "snippet"}, f.description) : null],
+      ["Références", f.refs.length ? h("ul", {class: "flow"}, f.refs.map(r => h("li", {}, h("span", {class: "mono"}, refLabel(r))))) : null],
+      ["Créé", f.created_at],
+      LIVE ? ["Actions", h("div", {class: "triagebox"},
+        h("button", {class: "tbtn", onclick: () => { state.form = {...f}; state.drafts = Object.fromEntries(Object.entries(state.drafts).filter(([k]) => !k.startsWith("f:"))); render(); }}, "Modifier"),
+        h("button", {class: "tbtn", onclick: () => { if (confirm(`Supprimer le constat #${f.id} ?`)) run(async () => { await api(`/api/findings/${f.id}`, {method: "DELETE"}); await refresh(); }); }}, "Supprimer"))] : ["", null],
+    ].filter(x => x[0] !== ""))});
+  return [state.form ? findingForm() : null, head, card(`Constats de l'auditeur (${rows.length})`,
+    rows.length ? t : empty(LIVE ? "Aucun constat. Créez-en un, ou partez d'un résultat automatique (« Créer un constat à partir de ceci »)." : "Aucun constat rédigé."))];
+}
+
+/* ---------- Comparaison de runs ---------- */
+const KIND_FR = {secret: "Secrets", sast_finding: "Code (SAST)", vulnerability: "Dépendances vulnérables"};
+function viewDiff() {
+  const diff = state.diffData || D.diff;
+  let picker = null;
+  if (LIVE) {
+    const others = D.options.audits.filter(a => a.id !== D.audit.id);
+    picker = h("div", {class: "filters"}, h("span", {class: "muted"}, `Comparer avec un run antérieur (A) → ${D.audit.label || D.audit.id} (B) :`),
+      selectOf(state.diffBase, [["", "— choisir un run —"], ...others.map(a => [a.id, `${a.label ? a.label + " — " : ""}${a.id} (${a.status})`])], v => {
+        state.diffBase = v; state.diffData = null;
+        if (v) run(async () => { state.diffData = await api(`/api/diff?a=${encodeURIComponent(v)}&b=${encodeURIComponent(D.audit.id)}`); render(); });
+      }));
+  }
+  if (!diff) return [picker, card("Comparaison", empty(others0() ? "Choisissez un run de référence." : "Un seul audit : lancez-en un second pour comparer."))];
+  const kpis = h("div", {class: "kpis"}, ...[["new", "Nouveaux", "warn"], ["fixed", "Corrigés", "ok"], ["persistent", "Persistants", ""]].map(([k, l]) =>
+    h("div", {class: "kpi"}, h("div", {class: "v"}, fmt(diff.counts[k])), h("div", {class: "l"}, l))));
+  const notes = [
+    diff.projects_added.length ? `Projets ajoutés (leurs résultats comptent comme nouveaux) : ${diff.projects_added.join(", ")}` : null,
+    diff.projects_removed.length ? `Projets absents du run B (non comptés comme corrigés) : ${diff.projects_removed.join(", ")}` : null,
+    ...diff.not_comparable.map(x => `Non comparable : ${x}`)].filter(Boolean);
+  const toggles = h("div", {class: "filters"}, [["new", "nouveaux"], ["fixed", "corrigés"], ["persistent", "persistants"]].map(([k, l]) =>
+    h("button", {class: "toggle", "aria-pressed": state.diffShow === k, onclick: () => { state.diffShow = k; render(); }}, `${l} (${diff.counts[k]})`)),
+    h("span", {class: "muted"}, `${diff.a} → ${diff.b}`));
+  const tables = Object.entries(diff.kinds).map(([kind, k]) => {
+    const rows = k[state.diffShow].filter(r => matchesQ(r.project, r.label, r.location));
+    return card(`${KIND_FR[kind] || kind} — ${state.diffShow === "new" ? "nouveaux" : state.diffShow === "fixed" ? "corrigés" : "persistants"} (${rows.length})`, rows.length ? table("diff-" + kind, [
+      {key: "severity", label: "Sévérité", sort: r => SEV_RANK[r.severity] ?? -1, render: r => sevChip(r.severity)},
+      {key: "project", label: "Projet"}, {key: "label", label: "Élément"}, {key: "location", label: "Emplacement", cls: "mono"},
+      {key: "triage", label: "Triage", render: r => triageChip(r.triage)},
+    ], rows, {defaultSort: {key: "severity", dir: "desc"}, rowId: r => r.fingerprint, limit: 1000}) : empty("Rien dans cette catégorie."));
+  });
+  return [picker, kpis, notes.length ? h("div", {class: "notice info"}, notes.map(n => h("div", {}, n))) : null, toggles, tables];
+}
+const others0 = () => LIVE && D.options.audits.length > 1;
+
+/* ---------- Lancement d'un audit (live) ---------- */
+async function pollJob() {
+  let since = 0;
+  for (;;) {
+    const snap = await api(`/api/jobs/current?since=${since}`);
+    since = snap.next;
+    state.job = {...snap, log: [...((state.job && state.job.log) || []), ...snap.log]};
+    render();
+    if (snap.state !== "running") break;
+    await new Promise(r => setTimeout(r, 600));
+  }
+  if (state.job.state === "finished" && state.job.run_id) { state.run = state.job.run_id; await refresh(); }
+}
+function viewJob() {
+  const tools = D.options.tools, job = state.job, running = job && job.state === "running";
+  const root = textInput("jobRoot", D.audit.root, {class: "grow", placeholder: "Dossier à auditer (chemin côté serveur)"});
+  const box = (label, checked, onchange) => h("label", {}, h("input", {type: "checkbox", checked, onchange: e => onchange(e.target.checked)}), label);
+  const launch = () => run(async () => {
+    const chosen = tools.filter(t => state.jobTools[t.name] ?? t.enabled).map(t => t.name);
+    await api("/api/jobs", {method: "POST", body: {root: draft("jobRoot", D.audit.root), tools: chosen, unpack: state.jobUnpack, history: state.jobHistory, critiq: state.jobCritiq, name: draft("jobName", "")}});
+    state.job = {state: "running", log: [], done: 0, total: 0, phase: 0};
+    render();
+    await pollJob();
+  });
+  const name = textInput("jobName", "", {placeholder: "ex. initial, contre-audit… (libre ; vide = identifiant seul)"});
+  const form = card("Nouvel audit", h("div", {class: "form"},
+    labelled("Nom de ce passage (de votre choix)", name),
+    labelled("Dossier (chaque sous-dossier est un projet)", root),
+    labelled("Outils", h("div", {class: "checks"}, tools.map(t => box(`${t.name}${t.available ? "" : " (introuvable)"}`, state.jobTools[t.name] ?? t.enabled, v => { state.jobTools[t.name] = v; })))),
+    h("div", {class: "checks"}, box("décompresser les archives (--unpack)", state.jobUnpack, v => { state.jobUnpack = v; }),
+      box("reconstruire l'historique git (--history)", state.jobHistory, v => { state.jobHistory = v; }),
+      box(`critique IA en fin d'audit (${(D.options.critiq || {}).model || "modèle non configuré"})`, state.jobCritiq, v => { state.jobCritiq = v; })),
+    h("div", {class: "triagebox"}, h("button", {class: "tbtn on", disabled: running ? "" : null, onclick: launch}, running ? "Audit en cours…" : "Lancer l'audit"),
+      h("span", {class: "muted"}, "Un seul audit à la fois. Les outils non installés sont signalés dans l'onglet Exécutions."))));
+  const startCrit = () => run(async () => {
+    await api("/api/critiq", {method: "POST", body: {run: D.audit.id}});
+    state.job = {state: "running", log: [], done: 0, total: 0, phase: 5};
+    render();
+    await pollJob();
+  });
+  const cq = D.options.critiq || {};
+  const critCard = card("Critique IA du run affiché", h("div", {class: "form"},
+    h("div", {class: "muted"}, `Demande l'avis de « ${cq.model || "(modèle non configuré : critiq.model)"} » (${cq.base_url || ""}) sur les résultats. Des extraits de code sont envoyés à ce moteur ; secrets jamais envoyés en clair. Avis consultatifs.`),
+    h("div", {class: "triagebox"}, h("button", {class: "tbtn on", disabled: running || !cq.model ? "" : null, onclick: startCrit}, "Lancer la critique IA"))));
+  const status = job ? card(`Audit ${job.run_id || ""} — ${{running: "en cours", finished: "terminé", error: "en erreur", idle: "inactif"}[job.state] || job.state}`, h("div", {class: "form"},
+    job.total ? h("div", {}, h("div", {class: "progress"}, h("span", {style: `width:${Math.round(100 * job.done / job.total)}%`})),
+      h("span", {class: "muted"}, `phase ${job.phase} : ${job.done}/${job.total}`)) : null,
+    job.error ? h("div", {class: "notice danger"}, job.error) : null,
+    h("pre", {class: "logbox"}, (job.log || []).slice(-300).join("\n")))) : null;
+  return [form, critCard, status];
+}
+
+/* ---------- Sorties brutes (interface locale) : lues à la demande, par pages, jamais embarquées ---------- */
+const qs = o => Object.entries(o).filter(([, v]) => v !== "" && v !== null && v !== undefined).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+const rawGet = (endpoint, params) => api(`/api/${endpoint}?${qs(params)}`);
+const humanSize = n => n < 1024 ? `${n} o` : n < 1048576 ? `${(n / 1024).toFixed(1)} Ko` : `${(n / 1048576).toFixed(1)} Mo`;
+function cached(store, key, fetcher) {  // charge une fois, redessine à l'arrivée ; une erreur est mémorisée (et affichée), pas rejouée en boucle
+  if (store[key] !== undefined) return store[key];
+  store[key] = null;
+  run(async () => { try { store[key] = await fetcher(); } catch (e) { store[key] = {error: String(e.message || e)}; } render(); });
+  return null;
+}
+function openRaw(path, kind, opts = {}) {
+  const R = state.raw;
+  R.file = {path, kind}; R.sub = opts.sub || (kind === "sarif" ? "resultats" : "voir"); R.runIdx = opts.run || 0; R.page = 0;
+  R.filters = {q: "", rule: "", level: "", file: "", line: "", index: "", ...(opts.filters || {})};
+  R.open = new Set(opts.expand || []);
+  state.tab = "brut"; render();
+}
+function rawLinkBtn(item, kind) {
+  if (!LIVE || !item.raw_report || !D.options.reveal) return null;
+  return h("button", {class: "tbtn", onclick: e => {
+    e.stopPropagation();
+    const path = item.raw_report;
+    if (kind === "sast") {
+      const f = item.raw_index != null ? {index: item.raw_index} : {rule: item.rule_id, file: item.file, line: item.start_line ?? ""};
+      openRaw(path, "sarif", {sub: "resultats", run: item.sarif_run || 0, filters: f, expand: item.raw_index != null ? [`r:${item.raw_index}`] : []});
+    } else if (kind === "secret" && item.raw_index != null) {
+      openRaw(path, path.endsWith(".jsonl") ? "jsonl" : "json", {expand: [`j:${path}|`, `j:${path}|/${item.raw_index}`]});
+    } else openRaw(path, path.endsWith(".sarif") ? "sarif" : path.endsWith(".jsonl") ? "jsonl" : "json", {});
+  }}, "Voir la sortie brute complète");
+}
+const loc2s = l => `${l.uri || "?"}${l.region && l.region.startLine ? ":" + l.region.startLine + (l.region.startColumn ? ":" + l.region.startColumn : "") + (l.region.endLine && l.region.endLine !== l.region.startLine ? "-" + l.region.endLine : "") : ""}`;
+const rawProject = path => { const m = /^runs\/[^/]+\/([^/]+)\//.exec(path || ""); return m && byName[m[1]] ? m[1] : null; };
+const sarifProject = () => LIVE && state.raw.file ? rawProject(state.raw.file.path) : null;
+const codeBtn = (uri, line, steps, idx) => { const pj = sarifProject(); return pj && uri ? h("button", {class: "tbtn", title: "Ouvrir ce fichier dans l'onglet Sources", onclick: e => {
+  e.stopPropagation(); openCode({project: pj, file: uri, line: line || 1, steps: steps || [], stepIdx: idx ?? -1}); }}, "code") : null; };
+function locBlock(l) {
+  return h("div", {}, h("span", {class: "mono"}, loc2s(l)), " ", codeBtn(l.uri, l.region && l.region.startLine), l.message ? " — " + l.message : "",
+    l.region && l.region.snippet ? h("pre", {class: "snippet"}, l.region.snippet) : null,
+    l.contextRegion && l.contextRegion.snippet ? h("pre", {class: "snippet"}, l.contextRegion.snippet) : null,
+    (l.logical || []).length ? h("div", {class: "muted"}, "élément logique : " + l.logical.join(", ")) : null);
+}
+function sarifDetail(r) {  // TOUT le résultat : règle complète, emplacements, tous les chemins de données, empreintes, propriétés
+  const rule = r.rule || {}, props = rule.properties || {}, kvj = o => Object.keys(o || {}).length ? h("pre", {class: "snippet"}, JSON.stringify(o, null, 2)) : null;
+  return kv([
+    ["Règle", h("span", {class: "mono"}, `${r.ruleId || "?"}${rule.name && rule.name !== r.ruleId ? " · " + rule.name : ""}`)],
+    ["Niveau", `${r.effectiveLevel}${r.level ? "" : " (hérité de la règle)"}${r.kind ? " · kind " + r.kind : ""}${r.baselineState ? " · " + r.baselineState : ""}${r.rank != null ? " · rang " + r.rank : ""}`],
+    ["Message", r.message.text ? h("div", {}, r.message.text) : null], ["Message (markdown)", r.message.markdown ? h("pre", {class: "snippet"}, r.message.markdown) : null],
+    ["Emplacements", r.locations.length ? h("div", {}, r.locations.map(locBlock)) : null],
+    ["Emplacements liés", r.relatedLocations.length ? h("div", {}, r.relatedLocations.map(locBlock)) : null],
+    [`Chemins de données (${r.codeFlows_total})`, r.codeFlows.length ? h("div", {}, r.codeFlows.map((cf, i) => h("div", {}, r.codeFlows_total > 1 ? h("strong", {}, `Chemin ${i + 1}`) : null,
+      cf.message ? h("div", {class: "muted"}, cf.message) : null, cf.threadFlows.map(tf => h("div", {}, tf.id ? h("div", {class: "muted"}, `fil ${tf.id}`) : null,
+        h("ol", {class: "step"}, tf.steps.map((st, si, all) => h("li", {}, h("span", {class: "mono"}, loc2s(st.location)), " ",
+          codeBtn(st.location.uri, st.location.region && st.location.region.startLine, all.map(x => ({file: x.location.uri, line: (x.location.region || {}).startLine || 1, message: x.location.message})), si),
+          st.location.message ? " — " + st.location.message : "",
+          st.importance ? h("span", {class: "muted"}, ` [${st.importance}]`) : null, st.nestingLevel ? h("span", {class: "muted"}, ` (imbrication ${st.nestingLevel})`) : null))),
+        tf.total_steps > tf.steps.length ? h("div", {class: "muted"}, `… ${tf.total_steps - tf.steps.length} étape(s) non affichée(s)`) : null))))) : null],
+    ["Description de la règle", rule.shortDescription], ["Description détaillée", rule.fullDescription && rule.fullDescription !== rule.shortDescription ? rule.fullDescription : null],
+    ["Aide de la règle", rule.help ? h("pre", {class: "snippet"}, rule.help) : null], ["Documentation", rule.helpUri],
+    ["Étiquettes", (props.tags || []).join(" · ")], ["Précision / gravité", [props.precision, props["problem.severity"], props["security-severity"] != null ? "security-severity " + props["security-severity"] : null].filter(Boolean).join(" · ")],
+    ["Suppressions", (r.suppressions || []).length ? kvj(r.suppressions) : null], ["Taxonomies (CWE...)", (r.taxa || []).length ? kvj(r.taxa) : null],
+    ["Empreintes partielles", kvj(r.partialFingerprints)], ["Empreintes", kvj(r.fingerprints)],
+    ["Propriétés du résultat", kvj(r.properties)], ["Propriétés de la règle", kvj(Object.fromEntries(Object.entries(props).filter(([k]) => k !== "tags")))],
+    ["Divers", [r.stacks ? `${r.stacks} pile(s)` : null, r.fixes ? `${r.fixes} correctif(s) proposé(s)` : null, r.occurrenceCount ? `${r.occurrenceCount} occurrence(s)` : null, r.analysisTarget ? "cible : " + r.analysisTarget : null].filter(Boolean).join(" · ")],
+  ]);
+}
+function rawTreeEl(entries) {
+  const prio = {opengrep: 0, codeql: 1};
+  const rows = entries.filter(e => (!state.project || e.project === state.project || e.project.startsWith(state.project + "@")) && matchesQ(e.project, e.tool, e.mode))
+    .sort((a, b) => (prio[a.tool] ?? 9) - (prio[b.tool] ?? 9) || a.tool.localeCompare(b.tool) || a.project.localeCompare(b.project) || a.mode.localeCompare(b.mode));
+  if (!rows.length) return empty("Aucune exécution pour ce filtre.");
+  return h("div", {class: "rawtree"}, rows.map(e => h("div", {class: "rawentry"},
+    h("div", {class: "head"}, h("strong", {}, e.tool + "/" + e.mode), " · ", e.project, " ", chip(STATUS_FR[e.status] || e.status, STATUS[e.status])),
+    e.error ? h("div", {class: "muted"}, e.error) : null,
+    e.files.map(f => h("div", {class: "file" + (state.raw.file && state.raw.file.path === f.path ? " sel" : ""), onclick: () => openRaw(f.path, f.kind)},
+      f.name, h("span", {class: "muted"}, `  ${humanSize(f.size)} · ${f.kind}`))))));
+}
+function subTabs(items, current, set) {
+  return h("div", {class: "subtabs"}, items.map(([id, label]) => h("button", {class: "toggle", "aria-pressed": current === id, onclick: () => set(id)}, label)));
+}
+function sarifViewer(path) {
+  const R = state.raw, S = (R.sarif[path] ||= {});
+  const sum = cached(S, "summary", () => rawGet("sarif/summary", {path}));
+  if (!sum) return card("Sortie SARIF", empty("Chargement…"));
+  if (sum.error) return card("Sortie SARIF", empty(sum.error));
+  const run0 = sum.runs[R.runIdx] || sum.runs[0];
+  if (!run0) return card("Sortie SARIF", empty("Aucun run dans ce fichier."));
+  const tabs = subTabs([["resultats", `Résultats (${fmt(run0.results)})`], ["fichiers", "Par fichier"], ["resume", "Résumé"], ["regles", `Règles (${fmt(run0.rules.declared)})`],
+    ["notifs", `Notifications (${fmt(run0.notifications_total)})`], ["voir", "JSON brut"]], R.sub, id => { R.sub = id; render(); });
+  const runPick = sum.runs.length > 1 ? h("div", {class: "filters"}, h("span", {class: "muted"}, "run SARIF :"), selectOf(String(R.runIdx), sum.runs.map(r => [String(r.index), `${r.index} · ${r.tool.name} (${r.results})`]), v => { R.runIdx = +v; R.page = 0; })) : null;
+  let body;
+  if (R.sub === "resume") body = sarifSummaryView(run0, sum);
+  else if (R.sub === "regles") body = sarifRulesView(path, run0);
+  else if (R.sub === "fichiers") body = sarifFilesView(path, run0, S);
+  else if (R.sub === "notifs") body = sarifNotifsView(run0);
+  else if (R.sub === "voir") return [card(`${path}`, h("div", {}, tabs, jsonViewer(path)))];
+  else body = sarifResultsView(path, run0, S);
+  return card(`${run0.tool.name || "SARIF"} ${run0.tool.version || ""} — ${path.split("/").slice(-4).join("/")}`, tabs, runPick, body);
+}
+function sarifSummaryView(run, sum) {
+  const inv = run.invocations[0] || {};
+  return h("div", {}, kv([
+    ["Outil", `${run.tool.name || "?"} ${run.tool.version || ""}${run.tool.organization ? " · " + run.tool.organization : ""}`], ["Documentation", run.tool.informationUri],
+    ["Paquets / extensions", run.extensions.length ? run.extensions.map(e => `${e.name} ${e.version || ""}${e.rules ? " (" + e.rules + " règles)" : ""}`).join(" · ") : null],
+    ["Exécution", run.invocations.length ? run.invocations.map(i => `${i.executionSuccessful === false ? "ÉCHEC" : i.executionSuccessful ? "réussie" : "?"}${i.exitCode != null ? " · code " + i.exitCode : ""}${i.startTimeUtc ? " · " + i.startTimeUtc : ""}${i.endTimeUtc ? " → " + i.endTimeUtc : ""}`).join(" ; ") : null],
+    ["Ligne de commande", inv.commandLine ? h("span", {class: "mono"}, inv.commandLine) : null],
+    ["Résultats", `${fmt(run.results)} — ${Object.entries(run.levels).map(([k, v]) => `${k} ${v}`).join(" · ") || "aucun"}`],
+    ["Règles", `${fmt(run.rules.declared)} déclarée(s), ${fmt(run.rules.with_results)} avec résultat(s)`],
+    ["Fichiers (artifacts)", run.artifacts ? fmt(run.artifacts) : null], ["Taxonomies", run.taxonomies.map(t => `${t.name} (${t.taxa})`).join(" · ")],
+    ["Notifications", run.notifications_total ? `${run.notifications_total} (voir l'onglet Notifications)` : "aucune"],
+    ["Version SARIF", sum.version], ["Langue / colonnes", [run.defaultSourceLanguage, run.columnKind].filter(Boolean).join(" · ")],
+  ]), run.top_rules.length ? h("div", {}, h("div", {class: "muted", style: "padding:6px 12px"}, "Règles les plus fréquentes (clic : voir les résultats)"),
+    table("sarif-top", [{key: "id", label: "Règle", cls: "mono"}, {key: "count", label: "Résultats", num: true}], run.top_rules, {rowId: r => r.id, defaultSort: {key: "count", dir: "desc"}, limit: 40,
+      detail: null})) : null,
+    run.top_rules.length ? h("div", {class: "filters", style: "padding:0 12px 12px"}, run.top_rules.slice(0, 8).map(r => h("button", {class: "tbtn",
+      onclick: () => { state.raw.filters = {q: "", rule: r.id, level: "", file: "", line: "", index: ""}; state.raw.sub = "resultats"; state.raw.page = 0; render(); }}, `${r.id} (${r.count})`))) : null);
+}
+function sarifResultsView(path, run, S) {
+  const R = state.raw, F = R.filters, PAGE = 25, key = JSON.stringify([R.runIdx, F, R.page]);
+  const ruleIds = run.top_rules.map(r => r.id);
+  const setF = (k, v) => { F[k] = v; F.index = k === "index" ? v : ""; R.page = 0; render(); };
+  const field = (k, label, ph) => labelled(label, h("input", {type: "text", value: F[k], placeholder: ph, onchange: e => setF(k, e.target.value.trim())}));
+  const bar = h("div", {class: "filters", style: "padding:10px 12px"}, field("q", "Texte", "message, règle, fichier…"), field("file", "Fichier", "chemin"), field("line", "Ligne", "n°"),
+    labelled("Règle", selectOf(F.rule, [["", "toutes"], ...ruleIds.map(r => [r, r])], v => setF("rule", v))),
+    labelled("Niveau", selectOf(F.level, [["", "tous"], ...Object.keys(run.levels).map(l => [l, `${l} (${run.levels[l]})`])], v => setF("level", v))),
+    F.index !== "" ? h("button", {class: "tbtn", onclick: () => setF("index", "")}, `résultat n°${F.index} — voir tous`) : null);
+  const page = cached(S.results ||= {}, key, () => rawGet("sarif/results", {path, run: R.runIdx, offset: R.page * PAGE, limit: PAGE, q: F.q, rule: F.rule, level: F.level, file: F.file, line: F.line, index: F.index}));
+  if (!page) return h("div", {}, bar, empty("Chargement…"));
+  if (page.error) return h("div", {}, bar, empty(page.error));
+  const pages = Math.max(1, Math.ceil(page.total / PAGE));
+  const pager = h("div", {class: "filters", style: "padding:8px 12px"}, h("span", {class: "muted"}, `${fmt(page.total)} résultat(s) sur ${fmt(page.all)}`),
+    h("button", {class: "tbtn", disabled: R.page <= 0 ? "" : null, onclick: () => { R.page--; render(); }}, "‹ précédent"), h("span", {class: "muted"}, `page ${R.page + 1}/${pages}`),
+    h("button", {class: "tbtn", disabled: R.page + 1 >= pages ? "" : null, onclick: () => { R.page++; render(); }}, "suivant ›"));
+  return h("div", {}, bar, pager, page.items.length ? page.items.map(r => {
+    const id = `r:${r.index}`, open = R.open.has(id), l0 = r.locations[0];
+    return h("div", {}, h("div", {class: "rres", onclick: () => { open ? R.open.delete(id) : R.open.add(id); render(); }}, h("div", {class: "t"},
+      h("span", {class: "muted"}, `#${r.index}`), sevChip({error: "high", warning: "medium", note: "low", none: "info"}[r.effectiveLevel] || "medium"), h("span", {class: "mono"}, r.ruleId),
+      h("span", {class: "mono"}, l0 ? loc2s(l0) : ""), r.codeFlows_total ? chip(`${r.codeFlows_total} chemin(s)`, "accent") : null),
+      h("div", {class: "muted"}, (r.message.text || "").slice(0, 200))), open ? h("div", {style: "padding:6px 12px 12px;background:var(--chip)"}, sarifDetail(r),
+      h("div", {class: "triagebox", style: "margin-top:8px"}, h("button", {class: "tbtn", onclick: () => { R.sub = "voir"; R.open = new Set([`j:${path}|`, `j:${path}|/runs`, `j:${path}|/runs/${R.runIdx}`, `j:${path}|/runs/${R.runIdx}/results`, `j:${path}|/runs/${R.runIdx}/results/${r.index}`]); render(); }}, "Voir le JSON brut de ce résultat"))) : null);
+  }) : empty("Aucun résultat pour ces filtres."));
+}
+function sarifRulesView(path, run) {
+  const R = state.raw, PAGE = 40, S = R.sarif[path];
+  const data = cached(S, "rules" + R.runIdx, () => rawGet("sarif/rules", {path, run: R.runIdx}));
+  if (!data) return empty("Chargement…");
+  if (data.error) return empty(data.error);
+  const rows = data.rules.filter(r => (!R.ruleOnly || r.results) && matchesQ(r.id, r.name, r.shortDescription, (r.properties.tags || []).join(" ")) && (!R.ruleQ || `${r.id} ${r.name} ${r.shortDescription}`.toLowerCase().includes(R.ruleQ.toLowerCase())));
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  return h("div", {}, h("div", {class: "filters", style: "padding:10px 12px"}, labelled("Filtrer", h("input", {type: "text", value: R.ruleQ, placeholder: "id, nom, description", onchange: e => { R.ruleQ = e.target.value; R.rulePage = 0; render(); }})),
+    h("button", {class: "toggle", "aria-pressed": R.ruleOnly, onclick: () => { R.ruleOnly = !R.ruleOnly; R.rulePage = 0; render(); }}, "avec résultats seulement"),
+    h("span", {class: "muted"}, `${rows.length} règle(s) sur ${data.rules.length}`),
+    h("button", {class: "tbtn", disabled: R.rulePage <= 0 ? "" : null, onclick: () => { R.rulePage--; render(); }}, "‹"), h("span", {class: "muted"}, `${R.rulePage + 1}/${pages}`),
+    h("button", {class: "tbtn", disabled: R.rulePage + 1 >= pages ? "" : null, onclick: () => { R.rulePage++; render(); }}, "›")),
+    table("sarif-rules", [{key: "id", label: "Règle", cls: "mono"}, {key: "name", label: "Nom"}, {key: "defaultLevel", label: "Niveau"},
+      {key: "sev", label: "Gravité", sort: r => +(r.properties["security-severity"] || 0), render: r => r.properties["security-severity"] ?? r.properties["problem.severity"] ?? "—"},
+      {key: "results", label: "Résultats", num: true}], rows.slice(R.rulePage * PAGE, (R.rulePage + 1) * PAGE), {rowId: r => r.id, defaultSort: {key: "results", dir: "desc"},
+      detail: r => kv([["Description", r.shortDescription], ["Détail", r.fullDescription], ["Aide", r.help ? h("pre", {class: "snippet"}, r.help) : null], ["Documentation", r.helpUri],
+        ["Étiquettes", ((r.properties || {}).tags || []).join(" · ")], ["Propriétés", h("pre", {class: "snippet"}, JSON.stringify(r.properties, null, 2))],
+        ["Résultats", r.results ? h("button", {class: "tbtn", onclick: () => { R.filters = {q: "", rule: r.id, level: "", file: "", line: "", index: ""}; R.sub = "resultats"; R.page = 0; render(); }}, `voir les ${r.results} résultat(s)`) : "aucun"]])}));
+}
+function sarifFilesView(path, run, S) {
+  const R = state.raw, data = cached(S, "files" + R.runIdx, () => rawGet("sarif/files", {path, run: R.runIdx}));
+  if (!data) return empty("Chargement…");
+  if (data.error) return empty(data.error);
+  const pj = rawProject(path);
+  return h("div", {}, h("div", {class: "muted", style: "padding:8px 12px"}, `${fmt(data.files.length)} fichier(s) touché(s), triés par nombre de résultats (clic : voir ses résultats).`),
+    table("sarif-files", [{key: "uri", label: "Fichier", cls: "mono"}, {key: "count", label: "Résultats", num: true},
+      {key: "lv", label: "Niveaux", sort: f => f.count, render: f => Object.entries(f.levels).map(([k, v]) => `${k} ${v}`).join(" · ")},
+      {key: "go", label: "", render: f => pj && f.uri.indexOf("(") !== 0 ? h("button", {class: "tbtn", onclick: e => { e.stopPropagation(); openCode({project: pj, file: f.uri, line: 1}); }}, "code") : ""}],
+      data.files, {rowId: f => f.uri, defaultSort: {key: "count", dir: "desc"}, limit: 200,
+        onRowClick: f => { R.filters = {q: "", rule: "", level: "", file: f.uri, line: "", index: ""}; R.sub = "resultats"; R.page = 0; render(); }}));
+}
+function sarifNotifsView(run) {
+  if (!run.notifications_total) return empty("Aucune notification : l'outil n'a signalé ni erreur ni avertissement d'exécution.");
+  return h("div", {}, h("div", {class: "muted", style: "padding:8px 12px"}, "Erreurs et avertissements d'exécution de l'outil (ex. fichiers non extraits par CodeQL) : à lire avant de conclure à l'absence de résultat."),
+    table("sarif-notifs", [{key: "level", label: "Niveau", render: n => chip(n.level, n.level === "error" ? "bad" : n.level === "warning" ? "warn" : "")}, {key: "kind", label: "Type"},
+      {key: "descriptor", label: "Descripteur", cls: "mono"}, {key: "message", label: "Message"}], run.notifications, {rowId: n => n.descriptor + n.message, limit: 300,
+      detail: n => kv([["Message", n.message], ["Exception", n.exception], ["Emplacements", n.locations.length ? h("div", {}, n.locations.map(locBlock)) : null]])}));
+}
+function jnode(path, ptr, key, type, size, preview, depth) {
+  const R = state.raw, id = `${path}|${ptr}`, expandable = type === "object" || type === "array" || (preview || "").endsWith("…"), open = R.open.has("j:" + id);
+  const line = h("div", {class: "jrow", style: `padding-left:${depth * 16}px`, onclick: () => { if (!expandable) return; open ? R.open.delete("j:" + id) : R.open.add("j:" + id); render(); }},
+    expandable ? (open ? "▾ " : "▸ ") : "  ", h("span", {class: "muted"}, String(key)), ": ", type === "object" || type === "array" ? h("span", {class: "muted"}, `${type} ${preview}`) : preview);
+  if (!open) return line;
+  const node = cached(R.nodes, id, () => rawGet("raw/json", {path, pointer: ptr, offset: 0, limit: 100}));
+  if (!node) return [line, h("div", {class: "jrow muted", style: `padding-left:${(depth + 1) * 16}px`}, "chargement…")];
+  if (node.error) return [line, h("div", {class: "jrow", style: `padding-left:${(depth + 1) * 16}px`}, node.error)];
+  if (node.type !== "object" && node.type !== "array") return [line, h("pre", {class: "snippet", style: `margin-left:${(depth + 1) * 16}px`}, node.value + (node.truncated ? "\n… (tronqué)" : ""))];
+  const more = node.total - node.children.length;
+  return [line, node.children.map(c => jnode(path, c.pointer, c.key, c.type, c.size, c.preview, depth + 1)),
+    more > 0 ? h("div", {class: "jrow", style: `padding-left:${(depth + 1) * 16}px`, onclick: () => run(async () => {
+      const next = await rawGet("raw/json", {path, pointer: ptr, offset: node.children.length, limit: 100}); node.children.push(...next.children); render(); })}, `… afficher la suite (${more} restant(s))`) : null];
+}
+function jsonViewer(path) {
+  const R = state.raw, root = cached(R.nodes, `${path}|`, () => rawGet("raw/json", {path, pointer: ""}));
+  if (!root) return card("Sortie JSON", empty("Chargement…"));
+  if (root.error) return card("Sortie JSON", empty(root.error));
+  const mode = R.mode[path] || (root.type === "array" ? "tableau" : "arbre");
+  const toggle = root.type === "array" ? h("div", {class: "filters", style: "padding:8px 12px"}, ["arbre", "tableau"].map(m => h("button", {class: "toggle", "aria-pressed": mode === m, onclick: () => { R.mode[path] = m; render(); }}, m)),
+    h("span", {class: "muted"}, `${fmt(root.size)} élément(s) à la racine`)) : null;
+  if (mode === "tableau") return [toggle, jsonTable(path)];
+  return [toggle, h("div", {class: "jtree"}, jnode(path, "", "racine", root.type, root.size, root.type === "object" || root.type === "array" ? `(${fmt(root.size)})` : "", 0))];
+}
+function jsonTable(path) {
+  const R = state.raw, PAGE = 40, key = `${path}|${R.rowQ}|${R.rowPage}`;
+  const data = cached(R.rows, key, () => rawGet("raw/rows", {path, pointer: "", offset: R.rowPage * PAGE, limit: PAGE, q: R.rowQ}));
+  const bar = h("div", {class: "filters", style: "padding:0 12px 8px"}, labelled("Chercher dans les éléments", h("input", {type: "text", value: R.rowQ, placeholder: "texte (n'importe quel champ)", onchange: e => { R.rowQ = e.target.value; R.rowPage = 0; render(); }})));
+  if (!data) return h("div", {}, bar, empty("Chargement…"));
+  if (data.error) return h("div", {}, bar, empty(data.error));
+  const pages = Math.max(1, Math.ceil(data.total / PAGE));
+  return h("div", {}, bar, h("div", {class: "filters", style: "padding:0 12px 8px"}, h("span", {class: "muted"}, `${fmt(data.total)} sur ${fmt(data.all)}`),
+    h("button", {class: "tbtn", disabled: R.rowPage <= 0 ? "" : null, onclick: () => { R.rowPage--; render(); }}, "‹"), h("span", {class: "muted"}, `${R.rowPage + 1}/${pages}`),
+    h("button", {class: "tbtn", disabled: R.rowPage + 1 >= pages ? "" : null, onclick: () => { R.rowPage++; render(); }}, "›")),
+    table("jrows", [{key: "index", label: "#", num: true}, ...data.columns.map(c => ({key: c, label: c, sort: r => r.cells[c], render: r => r.cells[c]}))], data.rows,
+      {rowId: r => r.pointer, limit: PAGE, detail: r => h("div", {class: "jtree"}, jnode(path, r.pointer, `[${r.index}]`, "object", null, "", 0))}));
+}
+function textViewer(path) {
+  const R = state.raw, T = (R.text[path] ||= {chunks: [], next: 0, size: null, busy: false});
+  const load = () => { if (T.busy || T.next === null) return; T.busy = true; run(async () => { try { const r = await rawGet("raw/text", {path, offset: T.next}); T.chunks.push(r.text); T.next = r.next; T.size = r.size; } finally { T.busy = false; } render(); }); };
+  if (!T.chunks.length && !T.busy) load();
+  return card(path.split("/").slice(-3).join("/"), T.chunks.length ? h("pre", {class: "logbox"}, T.chunks.join("")) : empty("Chargement…"),
+    T.next !== null && T.chunks.length ? h("div", {class: "filters", style: "padding:8px 12px"}, h("button", {class: "tbtn", onclick: load}, "Charger la suite"), h("span", {class: "muted"}, `${humanSize(T.next)} / ${humanSize(T.size)}`)) : null);
+}
+function rawViewer(f) {
+  const head = h("div", {class: "filters", style: "padding:0 0 8px"}, h("span", {class: "mono"}, f.path), copyBtn(f.path));
+  if (f.kind === "sarif") return [head, sarifViewer(f.path)];
+  if (f.kind === "json" || f.kind === "jsonl") return [head, card(f.kind === "jsonl" ? "Sortie JSON Lines" : "Sortie JSON", jsonViewer(f.path))];
+  if (f.kind === "binary") return [head, card("Fichier binaire", empty("Non affichable ici : ouvrez-le depuis le disque."))];
+  return [head, textViewer(f.path)];
+}
+function viewRaw() {
+  if (!LIVE) return card("Sorties brutes", empty("Disponibles dans l'interface locale (aule serve)."));
+  if (!D.options.reveal) return card("Sorties brutes", empty("Mode --mask : les sorties brutes contiennent les secrets en clair et ne sont pas servies."));
+  const R = state.raw;
+  const importer = h("div", {class: "filters", style: "padding:0 0 10px"}, h("label", {}, "Importer un SARIF extérieur (CI, client…) : ",
+    h("input", {type: "file", accept: ".sarif,.json", onchange: e => { const f = e.target.files && e.target.files[0]; if (!f) return;
+      run(async () => { const r = await api("/api/sarif/import", {method: "POST", body: {name: f.name, content: await f.text()}}); R.tree = null; openRaw(r.path, "sarif"); }); }})));
+  if (R.tree === null && !R.loading) { R.loading = true; run(async () => { try { R.tree = (await rawGet("raw/tree", {run: D.audit.id})).entries; } finally { R.loading = false; } render(); }); }
+  if (!R.tree) return card("Sorties brutes", empty("Chargement…"));
+  return [importer, h("div", {class: "rawgrid"}, card(`Exécutions et fichiers (${R.tree.length})`, rawTreeEl(R.tree)),
+    h("div", {}, R.file ? rawViewer(R.file) : card("Sortie brute", empty("Choisissez un fichier : opengrep et CodeQL en tête, puis les autres outils. Les fichiers .sarif ouvrent la visionneuse complète."))))];
+}
+
+/* ---------- Sources : naviguer dans le code du projet (interface locale) ---------- */
+state.code = {project: "", dirs: {}, open: new Set(), file: null, ref: "", data: null, loading: null, sel: null, steps: [], step: -1, flows: undefined, flowIdx: 0,
+  finds: {}, hit: 0, search: null, quick: null, target: 1, scroll: false};
+function resetBrowsers() {
+  const R = state.raw, C = state.code;
+  if (R.run !== D.audit.id) {
+    Object.assign(R, {run: D.audit.id, tree: null, loading: false, file: null, sarif: {}, nodes: {}, open: new Set(), mode: {}, rows: {}, text: {}, page: 0});
+    Object.assign(C, {project: "", dirs: {}, open: new Set(), file: null, ref: "", data: null, loading: null, sel: null, steps: [], step: -1, flows: undefined, finds: {}, search: null, quick: null});
+  }
+}
+state.raw.run = D.audit.id;
+const sevOfItem = (kind, it) => kind === "secret" ? (it.verified ? "critical" : "high") : (it.severity || "medium");
+const sevCls = sev => sev === "critical" || sev === "high" ? "bad" : sev === "medium" ? "warn" : "";
+function codeIndex() {  // constats par « projet|fichier », pour la marge, les compteurs et la liste du fichier
+  const idx = new Map(), seen = new Set(), add = (kind, it, file, line, end) => { if (!file) return; const k = it.project + "|" + file;
+    if (state.group && it.cluster && it.cluster.size > 1) { const g = it.cluster.id + "|" + k; if (seen.has(g)) return; seen.add(g); }   // un groupe = un marqueur par fichier
+    (idx.get(k) || idx.set(k, []).get(k)).push({kind, it, line: line || 1, end: end || line || 1, sev: sevOfItem(kind, it)}); };
+  D.sast.forEach(f => add("sast", f, f.file, f.start_line, f.end_line));
+  D.secrets.forEach(x => add("secret", x, x.file, x.start_line, x.end_line));
+  D.vulns.forEach(v => add("vuln", v, (v.dependency || {}).file, 1, 1));
+  return idx;
+}
+function fileStats(idx, project) {  // compteur et pire gravité par fichier ET par dossier
+  const stats = new Map(), bump = (path, sev) => { const e = stats.get(path) || {count: 0, worst: "info"}; e.count++; if ((SEV_RANK[sev] ?? 0) > (SEV_RANK[e.worst] ?? 0)) e.worst = sev; stats.set(path, e); };
+  for (const [k, list] of idx) {
+    if (!k.startsWith(project + "|")) continue;
+    const file = k.slice(project.length + 1), parts = file.split("/");
+    list.forEach(e => { bump(file, e.sev); let acc = ""; parts.slice(0, -1).forEach(d => { acc = acc ? acc + "/" + d : d; bump(acc, e.sev); }); });
+  }
+  return stats;
+}
+function openCode({project, file, line = 1, kind = null, item = null, steps = null, stepIdx = -1, ref = ""}) {
+  const C = state.code;
+  if (C.project !== project || C.file !== file || C.ref !== ref) C.data = null;
+  Object.assign(C, {project, file, ref, target: line || 1, scroll: true, sel: item ? {kind, item} : null, step: stepIdx, flows: undefined, flowIdx: 0, hit: 0});
+  C.steps = steps || (item && item.flow ? item.flow.map(s => ({file: s.file, line: s.line || 1, message: s.message})) : []);
+  const parts = file.split("/"); let acc = "";
+  parts.slice(0, -1).forEach(d => { acc = acc ? acc + "/" + d : d; C.open.add(project + "|" + acc); });
+  state.tab = "sources"; render();
+}
+function codeJump(file, line) {  // reste dans le même contexte (constat, chemin de données), change de fichier / de ligne
+  const C = state.code;
+  if (file !== C.file) { C.file = file; C.ref = ""; C.data = null; C.finds = {}; let acc = ""; file.split("/").slice(0, -1).forEach(d => { acc = acc ? acc + "/" + d : d; C.open.add(C.project + "|" + acc); }); }
+  C.target = Math.max(1, line || 1); C.scroll = true; render();
+}
+function codeLinkBtn(item, kind) {
+  const file = kind === "vuln" ? (item.dependency || {}).file : item.file;
+  if (!LIVE || !file || !byName[item.project]) return null;
+  const hist = kind === "secret" && item.commit && (item.mode === "git" || item.mode === "history") && byName[item.project].is_git;
+  return h("button", {class: "tbtn", onclick: e => { e.stopPropagation(); openCode({project: item.project, file, line: item.start_line || 1, kind, item, ref: hist ? item.commit : ""}); }},
+    hist ? "Voir dans le code (au commit)" : "Voir dans le code");
+}
+function codeLoad() {
+  const C = state.code, d = C.data, key = [C.project, C.file, C.ref, C.target].join("|");
+  if (!C.file || C.loading === key) return;
+  if (d && d.project === C.project && d.path === C.file && d.ref === C.ref) {
+    if (d.error) return;
+    if (C.target >= d.start && C.target <= d.end && (C.target - d.start >= 15 || d.start <= 1) && (d.end - C.target >= 15 || d.end >= d.total)) return;
+  }
+  C.loading = key;
+  run(async () => {
+    const meta = {project: C.project, path: C.file, ref: C.ref};
+    try { const r = await api("/api/code/file?" + qs({run: D.audit.id, project: C.project, path: C.file, around: C.target, ref: C.ref, window: 400})); if (C.loading === key) C.data = {...r, ...meta}; }
+    catch (e) { if (C.loading === key) C.data = {...meta, error: String(e.message || e), lines: [], start: 1, end: 0, total: 0}; }
+    finally { if (C.loading === key) C.loading = null; }
+    render();
+  });
+}
+const findKey = () => [state.code.project, state.code.file, state.code.ref, state.code.findQ].join("|");
+function codeNode(project, rel, depth, stats) {
+  const C = state.code, id = project + "|" + rel, node = cached(C.dirs, id, () => api("/api/code/tree?" + qs({run: D.audit.id, project, path: rel})));
+  if (!node) return h("div", {class: "muted", style: `padding-left:${depth * 14}px`}, "chargement…");
+  if (node.error) return h("div", {class: "muted", style: `padding-left:${depth * 14}px`}, node.error);
+  return [node.entries.map(e => {
+    const path = rel ? rel + "/" + e.name : e.name, st = stats.get(path), badge = st ? h("span", {class: "chip " + sevCls(st.worst)}, String(st.count)) : null;
+    if (e.type === "dir") {
+      const open = C.open.has(project + "|" + path);
+      return [h("div", {class: "cnode", style: `padding-left:${depth * 14 + 4}px`, onclick: () => { open ? C.open.delete(project + "|" + path) : C.open.add(project + "|" + path); render(); }},
+        h("span", {}, open ? "▾" : "▸"), h("span", {class: "nm"}, e.name + "/"), badge), open ? codeNode(project, path, depth + 1, stats) : null];
+    }
+    if (e.type === "link") return h("div", {class: "cnode muted", style: `padding-left:${depth * 14 + 4}px`}, h("span", {}, "↪"), h("span", {class: "nm"}, e.name));
+    return h("div", {class: "cnode" + (C.file === path ? " sel" : ""), style: `padding-left:${depth * 14 + 4}px`, title: e.size != null ? humanSize(e.size) : "",
+      onclick: () => openCode({project, file: path, line: 1})}, h("span", {}, " "), h("span", {class: "nm"}, e.name), badge);
+  }), node.truncated ? h("div", {class: "muted", style: `padding-left:${depth * 14}px`}, "… liste tronquée") : null];
+}
+function codeLeft(idx, stats) {
+  const C = state.code, files = [...stats.entries()].filter(([path]) => idx.has(C.project + "|" + path))
+    .sort((a, b) => (SEV_RANK[b[1].worst] ?? 0) - (SEV_RANK[a[1].worst] ?? 0) || b[1].count - a[1].count || a[0].localeCompare(b[0]));
+  const pick = h("div", {class: "cbar"}, selectOf(C.project, projects.map(p => [p.name, p.name + (p.parent ? "  (archive)" : "")]), v => { C.project = v; C.file = null; C.data = null; C.quick = null; C.search = null; C.sel = null; C.steps = []; }));
+  const quick = h("div", {class: "cbar"}, h("input", {type: "text", placeholder: "Aller au fichier… (nom ou chemin)", onchange: e => { const q = e.target.value.trim(); if (!q) { C.quick = null; render(); return; }
+    run(async () => { C.quick = {q, ...(await api("/api/code/files?" + qs({run: D.audit.id, project: C.project, q})))}; render(); }); }}));
+  const quickRes = C.quick ? h("div", {}, C.quick.files.length ? C.quick.files.map(f => h("div", {class: "crow", onclick: () => openCode({project: C.project, file: f, line: 1})}, h("span", {class: "mono"}, f)))
+    : empty("Aucun fichier."), C.quick.total > C.quick.files.length ? h("div", {class: "muted", style: "padding:2px 10px"}, `… ${C.quick.total - C.quick.files.length} autre(s)`) : null) : null;
+  const search = h("div", {class: "cbar"}, h("input", {type: "text", placeholder: "Chercher dans le projet… (3 car. min.)", onchange: e => { const q = e.target.value.trim(); if (q.length < 3) { C.search = null; render(); return; }
+    run(async () => { C.search = {q, ...(await api("/api/code/search?" + qs({run: D.audit.id, project: C.project, q})))}; render(); }); }}));
+  const searchRes = C.search ? h("div", {}, h("div", {class: "muted", style: "padding:2px 10px"}, `${C.search.results.length}${C.search.capped ? "+" : ""} occurrence(s) de « ${C.search.q} »`),
+    C.search.results.slice(0, 100).map(r => h("div", {class: "crow", onclick: () => openCode({project: C.project, file: r.file, line: r.line})},
+      h("span", {class: "mono muted"}, `${r.file.split("/").slice(-2).join("/")}:${r.line}`), h("span", {class: "mono"}, r.text.slice(0, 60))))) : null;
+  const hot = files.length ? h("div", {}, h("div", {class: "muted", style: "padding:4px 10px"}, `Fichiers à constats (${files.length})`),
+    h("div", {style: "max-height:170px;overflow:auto"}, files.slice(0, 60).map(([path, st]) => h("div", {class: "crow" + (C.file === path ? " cur" : ""), onclick: () => {
+      const first = (idx.get(C.project + "|" + path) || [])[0]; openCode({project: C.project, file: path, line: first ? first.line : 1, kind: first && first.kind, item: first && first.it}); }},
+      h("span", {class: "chip " + sevCls(st.worst)}, String(st.count)), h("span", {class: "mono"}, path))))) : null;
+  return card("Projet", pick, quick, quickRes, search, searchRes, hot, h("div", {class: "ctree"}, codeNode(C.project, "", 0, stats)));
+}
+function codeToolbar(d, sel) {
+  const C = state.code, key = findKey(), fd = C.finds[key];
+  const warn = (() => {
+    if (!sel || sel.item.file !== d.path || C.ref || d.error) return null;
+    const item = sel.item, first = ((sel.kind === "secret" ? item.match : item.snippet) || "").split("\n")[0], cur = d.lines[(item.start_line || 1) - d.start];
+    const n = s => s.replace(/\s+/g, " ").trim();
+    return first && cur !== undefined && n(first) && n(cur) && !n(cur).includes(n(first)) && !n(first).includes(n(cur)) ? "⚠ la ligne actuelle diffère de celle qui a été analysée : le code a pu changer depuis l'analyse" : null;
+  })();
+  return h("div", {}, h("div", {class: "cbar"}, h("span", {class: "mono"}, d.path), copyBtn(d.path),
+    C.ref ? h("span", {class: "chip warn"}, `état au commit ${C.ref.slice(0, 8)} (historique)`) : null,
+    C.ref ? h("button", {class: "tbtn", onclick: () => { C.ref = ""; C.data = null; render(); }}, "voir l'état actuel") : null,
+    d.redacted ? chip("secrets masqués", "accent") : null,
+    h("span", {class: "muted"}, d.total ? `${fmt(d.total)} ligne(s)` : "")),
+    h("div", {class: "cbar"}, labelled("Ligne", h("input", {type: "text", placeholder: "n°", onchange: e => { const n = parseInt(e.target.value, 10); if (n > 0) codeJump(d.path, n); }})),
+      labelled("Chercher", h("input", {type: "text", placeholder: "dans ce fichier", value: C.findQ, onchange: e => { C.findQ = e.target.value; C.hit = 0; if (!C.findQ) { render(); return; }
+        run(async () => { C.finds[findKey()] = await api("/api/code/find?" + qs({run: D.audit.id, project: C.project, path: C.file, q: C.findQ, ref: C.ref})); if (C.finds[findKey()].matches[0]) codeJump(C.file, C.finds[findKey()].matches[0]); else render(); }); }})),
+      fd ? [h("span", {class: "muted"}, fd.total ? `${C.hit + 1}/${fd.total}` : "aucune occurrence"),
+        fd.total > 1 ? [h("button", {class: "tbtn", onclick: () => { C.hit = (C.hit - 1 + fd.matches.length) % fd.matches.length; codeJump(C.file, fd.matches[C.hit]); }}, "‹"),
+          h("button", {class: "tbtn", onclick: () => { C.hit = (C.hit + 1) % fd.matches.length; codeJump(C.file, fd.matches[C.hit]); }}, "›")] : null] : null,
+      d.start > 1 ? h("button", {class: "tbtn", onclick: () => codeJump(d.path, Math.max(1, d.start - 200))}, "↑ lignes précédentes") : null,
+      d.end < d.total ? h("button", {class: "tbtn", onclick: () => codeJump(d.path, Math.min(d.total, d.end + 200))}, "↓ lignes suivantes") : null),
+    warn ? h("div", {class: "notice"}, warn) : null);
+}
+function codeLines(d, here) {
+  const C = state.code, sel = C.sel && C.sel.item.file === d.path ? C.sel.item : null, byLine = new Map();
+  here.forEach(e => (byLine.get(e.line) || byLine.set(e.line, []).get(e.line)).push(e));
+  const stepAt = new Map();
+  C.steps.forEach((s, i) => { if (s.file === d.path) (stepAt.get(s.line) || stepAt.set(s.line, []).get(s.line)).push(i + 1); });
+  const hits = new Set((C.finds[findKey()] || {matches: []}).matches);
+  return d.lines.map((text, i) => {
+    const n = d.start + i, list = byLine.get(n) || [], steps = stepAt.get(n) || [];
+    const worst = list.reduce((w, e) => (SEV_RANK[e.sev] ?? 0) > (SEV_RANK[w] ?? -1) ? e.sev : w, null);
+    const inRange = sel && n >= (sel.start_line || 1) && n <= (sel.end_line || sel.start_line || 1);
+    return h("div", {class: "cl" + (inRange ? " rng" : "") + (n === C.target ? " tgt" : "") + (steps.length ? " stp" : "") + (hits.has(n) ? " hit" : ""), id: n === C.target ? "cl-target" : null},
+      h("span", {class: "ln", title: "Cibler cette ligne", onclick: () => { C.target = n; render(); }}, String(n)),
+      h("span", {class: "mk"}, list.length ? h("button", {class: "mkb " + sevCls(worst), title: list.map(e => `${e.kind === "vuln" ? e.it.id : e.it.rule_id}`).join(" · "),
+        onclick: () => { const at = list.findIndex(e => C.sel && C.sel.item === e.it), e = list[(at + 1) % list.length]; codePick(e); }}, String(list.length)) : null),
+      h("span", {class: "src"}, text.length ? text : " ", steps.map(k => h("span", {class: "stepn", title: "Étape du chemin de données"}, String(k)))));
+  });
+}
+function codePick(e) {
+  const C = state.code;
+  C.sel = {kind: e.kind, item: e.it}; C.flows = undefined; C.flowIdx = 0; C.step = -1;
+  C.steps = e.it.flow ? e.it.flow.map(s => ({file: s.file, line: s.line || 1, message: s.message})) : [];
+  render();
+}
+function codeFlowPanel() {
+  const C = state.code, sel = C.sel && C.sel.item;
+  if (sel && C.sel.kind === "sast" && sel.raw_report && sel.raw_index != null && C.flows === undefined) {
+    C.flows = null;
+    run(async () => { try { const r = await api("/api/sarif/results?" + qs({path: sel.raw_report, run: sel.sarif_run || 0, index: sel.raw_index})); const d = r.items[0];
+        C.flows = d.codeFlows.flatMap((cf, i) => cf.threadFlows.map((tf, j) => ({label: `chemin ${i + 1}${cf.threadFlows.length > 1 ? "." + (j + 1) : ""} (${tf.total_steps} étapes)`,
+          steps: tf.steps.map(st => ({file: st.location.uri, line: (st.location.region || {}).startLine || 1, message: st.location.message})) })));
+        if (C.flows.length && C.flows[0].steps.length >= C.steps.length) C.steps = C.flows[0].steps; } catch (e) { C.flows = []; } render(); });
+  }
+  if (!C.steps.length) return null;
+  const go = i => { C.step = i; const s = C.steps[i]; codeJump(s.file, s.line); };
+  return card("Chemin de données", C.flows && C.flows.length > 1 ? h("div", {class: "cbar"}, selectOf(String(C.flowIdx), C.flows.map((f, i) => [String(i), f.label]), v => { C.flowIdx = +v; C.steps = C.flows[C.flowIdx].steps; C.step = -1; })) : null,
+    h("div", {class: "cbar"}, h("button", {class: "tbtn", disabled: C.step <= 0 ? "" : null, onclick: () => go(C.step - 1)}, "‹ étape précédente"),
+      h("span", {class: "muted"}, C.step >= 0 ? `étape ${C.step + 1}/${C.steps.length}` : `${C.steps.length} étape(s)`),
+      h("button", {class: "tbtn", disabled: C.step >= C.steps.length - 1 ? "" : null, onclick: () => go(C.step + 1)}, "étape suivante ›")),
+    C.steps.map((s, i) => h("div", {class: "crow" + (i === C.step ? " cur" : ""), onclick: () => go(i)}, h("span", {class: "stepn"}, String(i + 1)), h("span", {class: "mono"}, `${s.file}:${s.line}`), s.message ? h("span", {class: "muted"}, s.message) : null)));
+}
+function codeFindingCard(sel) {
+  if (!sel) return null;
+  const it = sel.item, k = sel.kind, sev = sevOfItem(k, it);
+  const pairs = k === "sast" ? [["Règle", `${it.tool} · ${it.rule_id}`], ["Message", it.message], ["Emplacement", `${it.file}:${it.start_line || "?"}`]]
+    : k === "secret" ? [["Règle", `${it.tool} · ${it.rule_id}`], ["Valeur", it.secret_masked ? h("span", {class: "secret"}, it.secret_masked) : null], ["Mode", it.mode + (it.commit ? ` · commit ${it.commit.slice(0, 10)}` : "")], ["Description", it.description]]
+    : [["Vulnérabilité", `${it.id} · ${(it.dependency || {}).name || ""} ${(it.dependency || {}).version || ""}`], ["Description", it.description], ["Corrigée en", it.fixed_version]];
+  return card("Constat sélectionné", h("div", {class: "cbar"}, sevChip(sev), triageChip(it.triage)), kv([...pairs, ["Triage", LIVE ? triageBox(it) : null], ["Avis du modèle d'IA", critBox(it)]]),
+    h("div", {class: "triagebox", style: "padding:6px 12px 10px"}, findingButton(it, k), rawLinkBtn(it, k)));
+}
+function viewSources() {
+  if (!LIVE) return card("Sources", empty("Disponible dans l'interface locale (aule serve) : le rapport statique n'embarque pas le code."));
+  const C = state.code;
+  if (!C.project || !byName[C.project]) C.project = (state.project && byName[state.project] ? state.project : (projects[0] || {}).name) || "";
+  if (!C.project) return card("Sources", empty("Aucun projet dans ce run."));
+  const idx = codeIndex(), stats = fileStats(idx, C.project), left = codeLeft(idx, stats);
+  if (!C.file) return h("div", {class: "codegrid"}, left, card("Code", empty("Choisissez un fichier : l'arborescence, « Aller au fichier », ou les fichiers à constats. Depuis un constat, « Voir dans le code » ouvre le fichier à la bonne ligne.")));
+  codeLoad();
+  const d = C.data && C.data.project === C.project && C.data.path === C.file && C.data.ref === C.ref ? C.data : null;
+  if (!d) return h("div", {class: "codegrid"}, left, card("Code", empty("Chargement…")));
+  if (d.error) return h("div", {class: "codegrid"}, left, card("Code", h("div", {class: "cbar"}, h("span", {class: "mono"}, d.path), d.ref ? h("button", {class: "tbtn", onclick: () => { C.ref = ""; C.data = null; render(); }}, "voir l'état actuel") : null), empty(d.error)));
+  const here = idx.get(C.project + "|" + d.path) || [], sel = C.sel;
+  const list = here.length ? card(`Constats de ce fichier (${here.length})`, [...here].sort((a, b) => a.line - b.line).map(e => h("div", {class: "crow" + (sel && sel.item === e.it ? " cur" : ""), onclick: () => { codePick(e); codeJump(d.path, e.line); }},
+    h("span", {class: "muted"}, `L${e.line}`), sevChip(e.sev), h("span", {class: "mono"}, e.kind === "vuln" ? e.it.id : e.it.rule_id), h("span", {class: "muted"}, e.kind === "secret" ? "secret" : e.kind === "vuln" ? "dépendance" : e.it.tool)))) : null;
+  return h("div", {class: "codegrid"}, left, h("div", {}, card("Code", codeToolbar(d, sel), h("div", {class: "codebox"}, codeLines(d, here))), codeFlowPanel(), codeFindingCard(sel), list));
+}
+function afterRender() {  // amène la ligne ciblée au centre de la fenêtre de code
+  const C = state.code;
+  if (state.tab === "sources" && C.scroll && C.data) {
+    C.scroll = false;
+    const el = document.getElementById("cl-target");
+    if (el && el.scrollIntoView) el.scrollIntoView({block: "center"});
+  }
+}
+
+/* ---------- squelette ---------- */
+const TABS = [
+  ["synthese", "Synthèse", viewSynthese, () => projects.length],
+  ["technologies", "Technologies", viewTech, () => new Set(D.technologies.map(t => t.language)).size],
+  ["secrets", "Secrets", viewSecrets, () => nGroups(D.secrets)],
+  ["sast", "Code (SAST)", viewSast, () => nGroups(D.sast)],
+  ["dependances", "Dépendances", viewDeps, () => nGroups(D.vulns)],
+  ["liens", "Liens", viewLinks, () => D.relations.filter(r => r.type !== "extracted_from").length || ""],
+  ["historique", "Historique", viewHistory, () => D.commits.length],
+  ["constats", "Constats", viewFindings, () => D.findings.length || ""],
+  ["comparaison", "Comparaison", viewDiff, () => ""],
+  ["executions", "Exécutions", viewRuns, () => problems.length || ""],
+  ["sources", "Sources", viewSources, () => ""],
+  ["brut", "Sorties brutes", viewRaw, () => ""],
+  ["audit", "Audit", viewJob, () => state.job && state.job.state === "running" ? "…" : ""],
+];
+const visibleTabs = () => TABS.filter(t => (t[0] !== "audit" || LIVE) && (t[0] !== "brut" || LIVE) && (t[0] !== "sources" || LIVE) && (t[0] !== "comparaison" || LIVE || D.diff));
+function syncToolbar() {
+  const sel = document.getElementById("project");
+  sel.replaceChildren(h("option", {value: ""}, "Tous les projets"), ...projects.filter(p => !p.parent).map(p => h("option", {value: p.name}, p.name)));
+  sel.value = state.project;
+  if (LIVE) {
+    document.getElementById("runwrap").replaceChildren(h("select", {"aria-label": "Audit", value: D.audit.id, onchange: e => { state.run = e.target.value; run(refresh); }},
+      D.options.audits.map(a => h("option", {value: a.id}, `${a.label ? a.label + " · " : ""}${a.id} · ${a.status}`))));
+  }
+  document.getElementById("title").textContent = `${D.mission ? D.mission.name + " — " : ""}Audit ${D.audit.label || D.audit.id}`;
+  document.getElementById("subtitle").textContent =
+    `${D.mission && D.mission.client ? "client " + D.mission.client + " · " : ""}${D.audit.label ? "run " + D.audit.id + " · " : ""}${D.audit.root} · statut ${D.audit.status} · lancé le ${D.audit.started_at.replace("T", " ").slice(0, 16)} · ${LIVE ? "mode interactif" : "rapport généré le " + D.generated_at.replace("T", " ")}`;
+}
+function render() {
+  saveHash();
+  syncToolbar();
+  const tabs = document.getElementById("tabs"), shown = visibleTabs();
+  if (!shown.some(t => t[0] === state.tab)) state.tab = "synthese";
+  tabs.replaceChildren(...shown.map(([id, label, , count]) => h("button", {class: "tab", role: "tab", "aria-selected": id === state.tab,
+    onclick: () => { state.tab = id; render(); }}, label, count() !== "" ? h("span", {class: "n"}, String(count())) : null)));
+  const [, , view] = shown.find(t => t[0] === state.tab);
+  document.getElementById("view").replaceChildren(...[state.flash ? h("div", {class: "notice " + (state.flash.bad ? "danger" : "info")}, state.flash.msg) : null, view()].flat(Infinity).filter(Boolean));
+  afterRender();
+}
+function init() {
+  const notices = document.getElementById("notices");
+  notices.append(REVEAL
+    ? h("div", {class: "notice danger"}, "⚠ CONFIDENTIEL — " + (LIVE ? "les secrets sont affichés EN CLAIR. Serveur local : ne l'exposez pas ; --mask pour les masquer." : "ce rapport contient des secrets EN CLAIR. Ne le transmettez pas, ne le versionnez pas ; stockez-le comme data/. Pour un exemplaire partageable : aule report --mask."))
+    : h("div", {class: "notice info"}, LIVE ? "Secrets masqués : « révéler » les affiche valeur par valeur, à la demande." : "Les valeurs de secrets sont masquées dans ce rapport. Les valeurs en clair restent dans les sorties brutes (data/runs/…/report.json)."),
+    ...D.warnings.map(w => h("div", {class: "notice"}, "⚠ " + w)));
+  loadHash();
+  document.getElementById("project").addEventListener("change", e => { state.project = e.target.value; render(); });
+  document.getElementById("q").addEventListener("input", e => { state.q = e.target.value; render(); });
+  render();
+  if (LIVE) run(async () => { const snap = await api("/api/jobs/current"); if (snap.state === "running") { state.job = {...snap}; render(); await pollJob(); } });
+}
+init();
+</script>
+</body>
+</html>

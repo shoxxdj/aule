@@ -1,0 +1,174 @@
+# Configuration de l'assistant d'audit — copier en `aule.yaml` (chargé automatiquement depuis le
+# dossier courant) ou passer `--config chemin.yaml`.
+# Les chemins relatifs sont relatifs à CE fichier. Tout est optionnel.
+
+# jobs: 4                 # exécutions d'outils en parallèle
+# timeout: 1800           # secondes par exécution (surchargeable par outil)
+# data_dir: ./data        # base SQLite + sorties brutes
+
+# Décompression des archives trouvées dans les projets (équivalent de --unpack).
+# Chaque archive devient un projet « <projet>@<archive> » analysé comme les autres ;
+# si elle contient un .git, son historique est analysable (gitleaks git, gittools).
+unpack:
+  enabled: false
+  max_depth: 1            # 1 = archives du projet ; 2 = aussi les archives dans les archives
+  max_total_mb: 2048      # taille décompressée maximale par archive (anti bombe de décompression)
+  max_files: 200000
+  # extensions: [.zip, .tar, .tar.gz, .tgz, .tar.bz2, .tbz2, .tar.xz, .txz]
+
+# Critique par un modèle d'IA (Ollama) des résultats des outils, une fois ceux-ci passés. DÉSACTIVÉE par défaut.
+# Activer : enabled: true ici, ou `aule run --critiq`, ou plus tard `aule critiq run`.
+# ⚠ Des EXTRAITS DE CODE du client sont envoyés au moteur : endpoint local uniquement (sauf allow_remote: true).
+#   Les valeurs de secrets ne sont jamais envoyées (indices calculés localement à la place).
+#   Avis CONSULTATIFS : le modèle peut se tromper ; il ne modifie jamais le triage (aule critiq apply : étape explicite).
+#   `aule critiq run --dry-run --show 3` affiche le texte EXACT qui serait envoyé, sans rien envoyer.
+critiq:
+  enabled: false
+  # base_url: http://127.0.0.1:11434
+  # model: qwen2.5-coder:7b          # PAS de défaut : choisissez parmi vos modèles (`ollama list`)
+  # kinds: [secret, sast]            # + vuln pour les dépendances (l'IA peut chercher l'usage du composant dans le code)
+  # min_severity: low
+  # max_findings: 200                # au plus N constats par passage (les plus graves d'abord)
+  # skip_triaged: true               # ne rejuge pas ce que l'humain a déjà trié
+  # context_lines: 15                # lignes de code autour du constat
+  # max_rounds: 3                    # tours où le modèle peut demander du code complémentaire
+  # max_request_lines: 120
+  # max_prompt_chars: 18000
+  # num_ctx: 8192                    # fenêtre de contexte demandée à Ollama (sinon il tronque en silence à 2048)
+  # timeout: 300
+  # temperature: 0.0
+  # allow_remote: false              # true : accepte un endpoint non local (le code client quitte alors la machine)
+  # send_secret_values: false        # ⚠ true : envoie les secrets en clair au modèle
+  # deny_globs: ["**/.env", "**/*.pem", "**/*.key", ".git/**"]   # fichiers jamais envoyés, même si le modèle les demande
+
+tools:
+  cloc:
+    # path: /opt/cloc/cloc                 # sinon : « cloc » recherché dans le PATH
+    options:
+      exclude_dirs: [node_modules, .venv, venv, __pycache__]
+
+  gitleaks:
+    # path: C:\tools\gitleaks\gitleaks.exe
+    # modes: [dir, git]                    # restreindre les modes (dir, git, history)
+    # extra_args: ["--config", "./gitleaks.toml"]
+    # env: {HTTPS_PROXY: "http://proxy:3128"}
+    # timeout: 3600
+
+  # Opengrep + règles https://github.com/opengrep/opengrep-rules  (SAST).
+  # Désactivé par défaut. Active : enabled: true ici, ou --with opengrep.
+  # Préparation : `aule update opengrep` clone / met à jour les règles (réseau + git).
+  # Ciblage : après cloc, seuls les dossiers de règles des langages détectés sont utilisés
+  # (Python -> python/, JavaScript -> javascript/, ...). Un projet sans technologie couverte est ignoré,
+  # avec la raison indiquée dans le rapport.
+  opengrep:
+    enabled: false
+    # path: /usr/local/bin/opengrep
+    options:
+      # rules_path: ./rules/opengrep-rules   # défaut : <data_dir>/rules/opengrep-rules
+      # rules_repo: https://github.com/opengrep/opengrep-rules
+      # rule_dirs: [python, javascript]      # force les dossiers (désactive le ciblage par technologie)
+      # always_include: [generic]            # dossiers ajoutés à chaque projet
+      # exclude_rule_dirs: []
+      # language_map: {Perl: perl}           # langage cloc -> dossier de règles, en plus des défauts
+      # exclude: [node_modules, .venv, venv] # chemins exclus du scan
+    # timeout: 3600
+
+  # OWASP Dependency-Check (composants vulnérables). Désactivé par défaut. Active : --with dependency-check.
+  # Préparation : `aule update dependency-check` télécharge la base NVD (long ; clé d'API recommandée).
+  # ⚠ Clé d'API : variable d'environnement NVD_API_KEY, JAMAIS dans ce fichier. Elle est masquée (***) dans
+  #   cmd.txt, meta.json et la base. Une seule exécution à la fois (base H2 partagée).
+  # Ciblage : lancé si un écosystème est détecté (langages cloc + pom.xml, package-lock.json, *.jar...).
+  dependency-check:
+    enabled: false
+    # path: ~/tools/dependency-check/bin/dependency-check.sh   # sinon : dependency-check(.sh|.bat) dans le PATH
+    options:
+      # data_path: ./depcheck-db             # défaut : <data_dir>/depcheck-db
+      # nvd_api_key_env: NVD_API_KEY
+      # update: true                         # false -> --noupdate (après `aule update`)
+      # enable_experimental: false           # Go, Dart, Swift, C/C++
+      # formats: [HTML]                      # en plus de JSON ; conservés dans la sortie brute
+    # timeout: 7200
+
+  # CodeQL (CLI GitHub) : analyse sémantique, avec le chemin de données source -> puits. Phase 4 (dernière).
+  # Désactivé par défaut. Active : enabled: true ici, ou --with codeql.
+  # Un MODE PAR LANGAGE (python, javascript-typescript, java-kotlin, csharp, go, c-cpp, ruby) : un projet
+  # polyglotte donne une exécution, un statut et une reprise par langage. Langages choisis d'après cloc.
+  # Préparation : `aule update codeql` télécharge les paquets de requêtes (ou utiliser le « CodeQL bundle »,
+  # qui les embarque : hors ligne). CodeQL ≥ 2.18 recommandé.
+  # Compilation : Java/Kotlin et C# sans build (--build-mode=none). Go et C/C++ : autobuild de CodeQL, qui
+  # exige toolchain et dépendances (souvent absentes sur du code client) -> donner build_commands.
+  # Ressources : une exécution à la fois, délai par défaut 2 h (max_parallel / timeout pour changer).
+  codeql:
+    enabled: false
+    # path: ~/tools/codeql/codeql          # le bundle fournit aussi le binaire
+    # modes: [python, javascript-typescript, java-kotlin]   # restreindre les langages analysés
+    # max_parallel: 1
+    # timeout: 14400
+    options:
+      # suite: security-extended             # code-scanning | security-extended | security-and-quality
+      # pack_versions: {python: "1.4.0"}     # épingler un paquet (reproductibilité)
+      # queries: {java-kotlin: ./mes-requetes/audit.qls}      # remplace la suite pour un langage
+      # build_commands: {c-cpp: "make -j4"}  # -> --command
+      # build_modes: {java-kotlin: autobuild}                 # défaut : java-kotlin et csharp -> none
+      # language_map: {Swift: swift}         # langage cloc -> identifiant CodeQL, en plus des défauts
+      # min_code_lines: 0                    # ignorer un langage sous ce seuil
+      # threads: 0                           # 0 = tous les cœurs
+      # ram: 8192                            # Mo
+      # search_path: ~/src/codeql            # dépôt github/codeql local (hors ligne)
+      # download: false                      # true -> analyze --download
+      # analyze_args: []                     # extra_args vaut pour `database create`
+      # keep_database: false                 # true : conserve la base (grosse) dans data/work/<run>/codeql/
+
+  # GitTools « Extractor » : reconstruit chaque commit d'un .git (même incomplet).
+  # Désactivé par défaut. Active : enabled: true ici, ou --history, ou --tools ...,gittools
+  # Alimente l'onglet « Historique » et le mode gitleaks `history`.
+  # ⚠ un arbre complet est écrit par commit : prévoir de l'espace disque.
+  gittools:
+    enabled: false
+    path: ~/tools/GitTools/Extractor/extractor.sh
+    # launcher: [bash]                     # déduit automatiquement pour un .sh non exécutable
+
+  # ---- Outils optionnels supplémentaires (désactivés par défaut ; activer ici ou avec --with) -----------------------
+
+  # TruffleHog : second avis sur les secrets (fichiers + historique git). Mêmes résultats que gitleaks (onglet Secrets,
+  # filtre par outil, secret partagé entre projets, affichage en clair).
+  # ⚠ options.verify: true ENVOIE chaque secret trouvé au service concerné (AWS, GitHub...) pour savoir s'il est actif :
+  #   c'est un test d'identifiants chez un tiers, hors périmètre de la plupart des missions. Désactivé par défaut.
+  trufflehog:
+    enabled: false
+    options:
+      verify: false
+
+  # OSV-Scanner : composants vulnérables d'après les lockfiles/manifestes.
+  # ⚠ Par défaut il interroge l'API api.osv.dev : les NOMS ET VERSIONS des dépendances du client quittent la machine
+  #   (un avertissement s'affiche au lancement). options.offline: true l'évite (base à télécharger au préalable).
+  osv-scanner:
+    enabled: false
+    options:
+      # command: [scan, source]     # osv-scanner ≥ 2 ; [scan] ou [] pour les versions 1.x
+      offline: false
+
+  # Trivy : composants vulnérables ET mauvaises configurations IaC (Dockerfile, Terraform, Kubernetes...). Les
+  # mauvaises configurations vont dans l'onglet Code (SAST) avec la catégorie `iac`. Trivy ≥ 0.50. Une exécution à la fois.
+  trivy:
+    enabled: false
+    options:
+      # scanners: [vuln, misconfig]
+      # skip_db_update: false
+      # offline: false
+      # cache_dir: ~/.cache/trivy
+
+  # Checkov : mauvaises configurations d'infrastructure as code (Terraform, CloudFormation, Kubernetes, Dockerfile, Helm,
+  # GitHub Actions...). Lancé seulement si un fichier d'IaC est détecté. Sans clé Prisma, pas de sévérité native.
+  checkov:
+    enabled: false
+    options:
+      default_severity: medium
+
+  # Liens entre projets (dépendances, même dépôt d'origine, secrets et hôtes partagés) : actif par défaut, léger.
+  links:
+    options:
+      # ignore_hosts: [corp.example, cdn.interne]   # suffixes de domaine à ne pas relier, en plus des hôtes publics courants
+
+# Rappel : tout outil accepte `max_parallel` (exécutions simultanées), `timeout`, `modes`, `extra_args`, `env`, `launcher`, `path`.
+# Par défaut max_parallel vaut 1 pour codeql, trivy et dependency-check.
