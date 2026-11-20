@@ -1,0 +1,55 @@
+# llm.example.yaml — le moteur d'IA de la critique (aule critiq, aule run --critiq).
+#
+# Copiez ce fichier en `llm.yaml` à côté de aule.yaml, décommentez UN bloc, puis :  chmod 600 llm.yaml
+#   - la clé d'API est ICI (jamais dans l'environnement : Aulë ne lit aucun secret dans les variables d'environnement) ;
+#   - NE VERSIONNEZ PAS llm.yaml (aule.yaml, lui, n'a plus aucun secret et peut l'être) ;
+#   - pour le ranger hors du dépôt : `llm_file: ~/.config/aule/llm.yaml` dans aule.yaml.
+# Une clé qui n'a pas de sens pour le moteur choisi est REFUSÉE (jamais ignorée en silence). Vérifier : aule critiq check [--probe]
+# Venez d'une ancienne configuration (réglages dans la section critiq de aule.yaml) ?  aule llm migrate
+#
+# Copié tel quel, ce fichier ne contient aucun réglage : c'est Ollama sur cette machine (http://127.0.0.1:11434), sans clé.
+
+# === ollama ===
+# provider: ollama
+# url: http://127.0.0.1:11434
+# model: qwen2.5-coder:7b            # le modèle installé (ollama list)
+# num_ctx: 8192                      # fenêtre de contexte : à augmenter (32768) si allow_more_code est coché dans aule.yaml
+# temperature: 0.0
+# timeout: 300
+# allow_remote: false                # true : consentement explicite si Ollama n'est PAS sur cette machine (du code audité y part)
+
+# === librechat ===
+# provider: librechat                # API Agents de LibreChat (bêta) ; `model` = identifiant d'AGENT, sans outil ni fichier
+# url: https://chat.exemple.fr       # le site : /api/agents/v1 est ajouté tout seul
+# model: agent_abc123
+# api_key: "votre-cle-d-api"         # Paramètres > Données et confidentialité > Clés d'API d'agents
+# allow_remote: true                 # obligatoire hors machine locale ; https:// exigé (sauf insecure_http: true)
+# endpoint: chat_completions         # ou responses (Open Responses)
+# ca_file: pki/ca-interne.pem        # autorité de certification privée ; le TLS d'un moteur LibreChat n'est jamais désactivable
+# proxy: env                         # env : suivre HTTP(S)_PROXY ; ou une URL http://hôte:port ; absent : jamais de proxy
+# retries: 2                         # nouvelles tentatives sur 429/502/503/504 (0 à 5)
+# timeout: 300
+
+# === custom ===
+# provider: custom                   # n'importe quel point d'accès compatible Chat Completions (passerelle interne, Triton, vLLM…)
+# url: https://llm.exemple.fr/v1/chat/completions   # URL COMPLÈTE
+# model: triton
+# api_key: "votre-cle-d-api"
+# api_key_header: x-ai-api-key       # en-tête qui porte la clé (défaut : Authorization, avec « Bearer »)
+# api_key_prefix: ""                 # texte devant la clé (défaut : « Bearer » pour Authorization, rien pour un autre en-tête)
+# allow_remote: true                 # obligatoire hors machine locale ; https:// exigé (sauf insecure_http: true)
+# headers: {X-Tenant: acme}          # en-têtes supplémentaires (valeurs expurgées des erreurs)
+# max_tokens: 2048                   # null : non envoyé. Un modèle à raisonnement a besoin de plus (4096, 8192) : le raisonnement consomme ce budget
+# body: {temperature: 0, top_p: 1}   # champs ajoutés au JSON envoyé (l'emportent sur le reste ; model et messages sont réservés)
+# json_mode: prompt                  # prompt (consigne dans le message) | json_object | json_schema (response_format)
+# fold_system: false                 # true : message système replié dans le premier message utilisateur
+# response_path: choices.0.message.content   # où lire le texte dans la réponse JSON (ex. output.text)
+# check_url: https://llm.exemple.fr/v1/models   # GET de vérification pour `aule critiq check`
+# verify_tls: true                   # false = comme curl --insecure (avertissement à chaque usage) ; préférez ca_file
+# ca_file: pki/ca-interne.pem
+# client_cert: pki/client.pem        # TLS mutuel
+# client_key: pki/client.key
+# proxy: http://proxy:3128           # env : suivre HTTP(S)_PROXY ; ou une URL ; absent : jamais de proxy
+# retries: 2
+# timeout: 300
+# insecure_http: false               # true : accepter http:// vers un hôte distant (clé et code NON chiffrés)
