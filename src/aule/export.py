@@ -19,11 +19,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from .models import SEVERITIES, SEV_RANK
 from .db import Database
 from .report import build_report_data
 
-SEV_ORDER = ["critical", "high", "medium", "low", "info"]
-SEV_RANK = {s: len(SEV_ORDER) - i for i, s in enumerate(SEV_ORDER)}
+SEV_ORDER = list(SEVERITIES)
 SEV_FR = {"critical": "critique", "high": "élevée", "medium": "moyenne", "low": "faible", "info": "info"}
 TRIAGE_FR = {"confirmed": "confirmé", "to_review": "à revoir", "accepted_risk": "risque accepté", "false_positive": "faux positif", None: ""}
 MODE_FR = {"dir": "fichiers actuels", "git": "historique git", "history": "historique reconstruit"}
@@ -34,10 +34,6 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 class ExportError(Exception):
     pass
-
-
-def _max_sev(a: str, b: str) -> str:
-    return a if SEV_RANK.get(a, 0) >= SEV_RANK.get(b, 0) else b
 
 
 def _merge_triage(statuses: list[str | None]) -> str | None:

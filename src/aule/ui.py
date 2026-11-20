@@ -15,7 +15,6 @@ import re
 import shutil
 import sys
 import threading
-import time
 import unicodedata
 from dataclasses import dataclass
 from typing import Callable, Iterable

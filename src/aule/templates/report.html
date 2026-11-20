@@ -82,9 +82,15 @@ textarea{width:100%;min-height:90px}
 .form{padding:14px;display:grid;gap:10px}
 .form label{display:grid;gap:4px;color:var(--muted);font-size:12px}
 .bulk{padding:6px 10px;background:var(--chip);border-radius:8px}
-.graph{display:block;width:100%;height:auto;background:var(--panel)}
-.graph text{fill:var(--text);font-size:11px;paint-order:stroke;stroke:var(--panel);stroke-width:3px}
-.node{cursor:pointer}
+.lgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(250px,330px);gap:14px;align-items:start}
+.lgsvg{display:block;width:100%;aspect-ratio:1000/620;height:auto;background:var(--panel);cursor:grab;touch-action:none;user-select:none}
+.lgsvg:active{cursor:grabbing}
+.lg-node{cursor:pointer}
+.lg-node.dim,.lg-edge-g.dim{opacity:.16}
+.lg-label{font:11px system-ui,sans-serif;fill:var(--text);paint-order:stroke;stroke:var(--panel);stroke-width:3px;pointer-events:none}
+.lg-el{font:9px system-ui,sans-serif;fill:var(--muted);paint-order:stroke;stroke:var(--panel);stroke-width:3px;pointer-events:none}
+.lg-edge{pointer-events:none}
+@media(max-width:900px){.lgrid{grid-template-columns:1fr}}
 .logbox{margin:0;padding:10px;max-height:340px;overflow:auto;font:12px/1.4 var(--mono);white-space:pre-wrap;background:var(--chip)}
 .progress{height:8px;background:var(--chip);border-radius:5px;overflow:hidden;margin:8px 0}
 .progress>span{display:block;height:100%;background:var(--accent)}
@@ -255,6 +261,8 @@ function critBox(x) {
     h("div", {class: "muted"}, c.sent.length ? "Code envoyé au modèle : " + c.sent.map(t => t.search ? `recherche « ${t.search} »` : `${t.file}:${t.start}-${t.end}`).join(", ") : "Aucun extrait de code envoyé."));
 }
 /* ---------- recoupement : une même réalité vue par plusieurs détections = UN constat à trier ---------- */
+const isHidden = s => !!s.unreachable_only && groupMembers(s).every(m => m.unreachable_only);   // n'existe que dans des commits que plus aucune référence n'atteint
+const HIDDEN_TEXT = "Ce secret ne figure que dans des commits sur lesquels aucune référence (branche, étiquette, remise) ne mène : branche supprimée, historique réécrit… Il est invisible dans `git log` mais récupérable tant que le dépôt n'est pas nettoyé (git gc) : ne considérez pas qu'il a disparu.";
 const REASON_FR = {same_secret: "même valeur de secret dans le même fichier", nested_values: "valeurs imbriquées à la même ligne", same_cwe_location: "même CWE, lignes qui se recouvrent",
   flow_endpoint: "extrémité du chemin de données", same_rule_location: "même règle au même emplacement", same_component_vuln: "même composant, même vulnérabilité", alias: "identifiants équivalents (alias CVE / GHSA)"};
 let _fpD = null, _fpMap = null;
@@ -361,7 +369,7 @@ const secretsOf = p => D.secrets.filter(s => s.project === p);
 prepare();
 
 /* ---------- état (reflété dans l'URL pour pouvoir partager une vue) ---------- */
-const state = {tab: "synthese", group: true, project: "", q: "", sort: {}, open: new Set(), modes: new Set(), rule: "", triage: "", onlyProblems: false,
+const state = {tab: "synthese", group: true, unreachableOnly: false, project: "", q: "", sort: {}, open: new Set(), modes: new Set(), rule: "", triage: "", onlyProblems: false,
   sevSast: new Set(), sastTools: new Set(), sastRule: "", sevDeps: new Set(), depsOnlyVuln: false, secretTools: new Set(), vulnTools: new Set(),
   hideFp: false, crit: "", linkTypes: new Set(), form: null, drafts: {}, revealed: {}, flash: null, run: D.audit.id, diffBase: "", diffData: null,
   diffShow: "new", job: null, jobTools: {}, jobUnpack: false, jobHistory: false, jobCritiq: false,
@@ -533,6 +541,7 @@ function viewSecrets() {
       ["Vérifié actif", s.verified ? "oui (testé auprès du service)" : null],
       ["Entropie", s.entropy], ["Empreinte (triage)", h("span", {class: "mono"}, s.fingerprint)],
       ["Hash du secret", h("span", {class: "mono"}, s.secret_sha256)],
+      isHidden(s) ? ["Accessibilité", HIDDEN_TEXT] : ["", null],
       s.mode === "history" ? ["Présent dans", `${s.commits_count} commit(s) : ${(s.commits || []).slice(0, 10).map(short).join(", ")}${s.commits_count > 10 ? "…" : ""}`] : ["", null],
       ["Sortie brute", s.raw_report ? h("span", {}, h("span", {class: "mono"}, s.raw_report), ` — entrée n°${s.raw_index}`, copyBtn(s.raw_report)) : null],
       LIVE ? ["", h("div", {class: "triagebox"}, findingButton(s, "secret"), rawLinkBtn(s, "secret"), codeLinkBtn(s, "secret"))] : ["", null],
@@ -541,7 +550,7 @@ function viewSecrets() {
   const t = table("secrets", [
     {key: "project", label: "Projet"},
     {key: "tool", label: "Outil", render: s => uniqOf(s, x => x.tool).map(t => chip(t))},
-    {key: "mode", label: "Mode", render: s => uniqOf(s, x => x.mode).map(m => chip(m, m === "dir" ? "warn" : "accent"))},
+    {key: "mode", label: "Mode", render: s => [uniqOf(s, x => x.mode).map(m => chip(m, m === "dir" ? "warn" : "accent")), isHidden(s) ? chip("inaccessible", "bad") : null]},
     {key: "rule_id", label: "Règle"},
     {key: "file", label: "Fichier", cls: "mono", render: s => s.file},
     {key: "start_line", label: "Ligne", num: true},
@@ -674,24 +683,29 @@ function viewDeps() {
 
 /* ---------- Historique ---------- */
 function viewHistory() {
-  const commits = D.commits.filter(inScope).filter(c => matchesQ(c.project, c.hash, c.author, c.message));
+  const commits = D.commits.filter(inScope).filter(c => matchesQ(c.project, c.hash, c.author, c.message) && (!state.unreachableOnly || c.reachable === false));
+  const hiddenN = D.commits.filter(inScope).filter(c => c.reachable === false).length;
   if (!D.commits.length) {
     return card("Historique", empty("Aucun historique extrait. Lancez l'audit avec --history (outil gittools) pour reconstruire les commits d'un .git, y compris dans les archives (--unpack)."));
   }
   const touching = c => D.secrets.filter(s => s.project === c.project && (s.commit === c.hash || (s.commits || []).includes(c.hash))).length;
   const rows = commits.map(c => ({...c, nsec: touching(c)}));
+  const filters = hiddenN ? h("div", {class: "filters"}, h("button", {class: "toggle", "aria-pressed": state.unreachableOnly, title: "Commits que plus aucune référence n'atteint : branche supprimée, historique réécrit",
+    onclick: () => { state.unreachableOnly = !state.unreachableOnly; render(); }}, `inaccessibles seulement (${hiddenN})`)) : null;
   const t = table("history", [
     {key: "project", label: "Projet"},
     {key: "index", label: "#", num: true},
     {key: "hash", label: "Commit", cls: "mono", render: c => short(c.hash)},
+    ...(D.commits.some(c => c.reachable !== undefined && c.reachable !== null) ? [{key: "reachable", label: "Accès", sort: c => c.reachable === false ? 0 : 1, render: c => c.reachable === false ? chip("inaccessible", "bad") : ""}] : []),
     {key: "date", label: "Date", render: c => c.date ? c.date.replace("T", " ").slice(0, 16) : "—"},
     {key: "author", label: "Auteur", render: c => c.author || "—"},
     {key: "message", label: "Message", render: c => (c.message || "").split("\n")[0].slice(0, 120)},
     {key: "nsec", label: "Secrets", num: true, render: c => c.nsec ? chip(String(c.nsec), "bad") : chip("0", "ok")},
   ], rows, {defaultSort: {key: "date", dir: "desc"}, rowId: c => c.project + c.hash,
-    detail: c => kv([["Commit", h("span", {class: "mono"}, c.hash)], ["Parents", (c.parents || []).map(short).join(", ")], ["Tree", c.tree],
+    detail: c => kv([["Commit", h("span", {class: "mono"}, c.hash)], ["Accessibilité", c.reachable === false ? "Aucune référence (branche, étiquette, remise) n'atteint ce commit : branche supprimée, historique réécrit… Invisible dans `git log`, mais récupérable tant que le dépôt n'est pas nettoyé (git gc)." : c.reachable === true ? "atteint par une référence" : null],
+      ["Fichiers de l'instantané", c.files != null ? fmt(c.files) : null], ["Parents", (c.parents || []).map(short).join(", ")], ["Tree", c.tree],
       ["Auteur", c.author ? `${c.author} <${c.author_email || ""}>` : null], ["Message", c.message], ["Dossier extrait", c.dir]])});
-  return card(`Commits reconstruits (${rows.length})`, rows.length ? t : empty("Aucun résultat."));
+  return [filters, card(`Commits reconstruits (${rows.length})`, rows.length ? t : empty("Aucun résultat."))];
 }
 
 /* ---------- Exécutions ---------- */
@@ -716,7 +730,7 @@ function viewRuns() {
   return [filters, card(null, rows.length ? t : empty("Rien à afficher."))];
 }
 
-/* ---------- Liens entre projets ---------- */
+/* ---------- Liens : graphe de propriétés interactif (à la manière du navigateur Neo4j) ---------- */
 const REL_FR = {depends_on: "dépend de", shared_secret: "secret partagé", same_remote: "même dépôt d'origine", shared_endpoint: "hôte commun", extracted_from: "extrait de"};
 const REL_COLOR = {depends_on: "#3b5bdb", shared_secret: "#c92a2a", same_remote: "#2b8a3e", shared_endpoint: "#e8590c", extracted_from: "#868e96"};
 const DIRECTED = new Set(["depends_on", "extracted_from"]);
@@ -728,6 +742,11 @@ function relDetail(r) {
   if (r.type === "extracted_from") return `archive ${r.archive}`;
   return "";
 }
+/* LG-MODEL:BEGIN — modèle du graphe : AUCUN accès au DOM ni à l'état de la page (testé en JavaScript pur par tests/test_graph.py) */
+const LG_KINDS = {
+  project: {label: "Projet", color: "#3b5bdb"}, derived: {label: "Projet issu d'une archive", color: "#868e96"},
+  secret: {label: "Secret partagé", color: "#c92a2a"}, host: {label: "Hôte commun", color: "#e8590c"}, remote: {label: "Dépôt d'origine", color: "#2b8a3e"}};
+const LG_DIRECTED = new Set(["depends_on", "extracted_from"]);
 function forceLayout(n, edges, W, H) {  // déterministe : mêmes données, même dessin
   const pos = Array.from({length: n}, (_, i) => ({x: W / 2 + Math.cos(2 * Math.PI * i / n) * W * 0.35, y: H / 2 + Math.sin(2 * Math.PI * i / n) * H * 0.35, vx: 0, vy: 0}));
   const k = Math.sqrt((W * H) / Math.max(n, 1)) * 0.8;
@@ -751,38 +770,301 @@ function forceLayout(n, edges, W, H) {  // déterministe : mêmes données, mêm
   }
   return pos;
 }
-function viewLinks() {
-  const base = D.relations.filter(r => !state.project || r.src === state.project || r.dst === state.project);
-  const types = [...new Set(D.relations.map(r => r.type))];
-  const rels = base.filter(r => (!state.linkTypes.size || state.linkTypes.has(r.type)) && matchesQ(r.src, r.dst, REL_FR[r.type], relDetail(r)));
-  const legend = h("div", {class: "filters"}, types.map(t => h("button", {class: "toggle", "aria-pressed": state.linkTypes.has(t),
-    style: `border-left:4px solid ${REL_COLOR[t] || "#999"}`, onclick: () => { state.linkTypes.has(t) ? state.linkTypes.delete(t) : state.linkTypes.add(t); render(); }},
-    `${REL_FR[t] || t} (${base.filter(r => r.type === t).length})`)), h("span", {class: "muted"}, `${rels.length} lien(s)`));
-  if (!D.relations.length) return card("Liens entre projets", empty("Aucun lien détecté (dépendances, dépôt d'origine, secrets ou hôtes partagés). L'outil « links » est actif par défaut ; il lit manifestes, .git/config et URL."));
-  const names = [...new Set(rels.flatMap(r => [r.src, r.dst]))].sort();
-  const idx = Object.fromEntries(names.map((nm, i) => [nm, i]));
-  const W = 900, Ht = 480, pos = names.length ? forceLayout(names.length, rels.map(r => [idx[r.src], idx[r.dst]]), W, Ht) : [];
-  const perPair = {};
-  const lines = rels.map(r => {
-    const key = [r.src, r.dst].sort().join("|"), n = perPair[key] = (perPair[key] ?? -1) + 1;
-    const a = pos[idx[r.src]], b = pos[idx[r.dst]], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, off = (n - 1.5) * 7;
-    const ox = -dy / d * off, oy = dx / d * off;
-    return svg("line", {x1: (a.x + ox).toFixed(1), y1: (a.y + oy).toFixed(1), x2: (b.x + ox - dx / d * 9).toFixed(1), y2: (b.y + oy - dy / d * 9).toFixed(1),
-      stroke: REL_COLOR[r.type] || "#999", "stroke-width": 2, "marker-end": DIRECTED.has(r.type) ? "url(#arrow)" : null}, svg("title", {}, `${r.src} → ${r.dst} : ${REL_FR[r.type] || r.type}`));
+const lgClip = (s, n) => (String(s).length > n ? String(s).slice(0, n - 1) + "…" : String(s));
+const lgShortRemote = url => String(url).replace(/^[a-z+]+:\/\//i, "").replace(/^[^@/]+@/, "").replace(/^([^/:]+):(?!\/)/, "$1/").replace(/\.git$/, "").replace(/\/+$/, "");
+function lgBuild(relations, byName) {
+  const nodes = new Map(), edges = new Map();
+  const node = (id, kind, label, data) => { if (!nodes.has(id)) nodes.set(id, {id, kind, label, data: data || {}, deg: 0}); return nodes.get(id).id; };
+  const proj = nm => node("p:" + nm, (byName[nm] || {}).parent ? "derived" : "project", nm, {project: nm});
+  const edge = (src, dst, type, extra) => {
+    const id = `${type}|${src}|${dst}`;
+    if (edges.has(id)) return;
+    edges.set(id, {id, src, dst, type, directed: LG_DIRECTED.has(type), ...extra});
+    nodes.get(src).deg++; nodes.get(dst).deg++;
+  };
+  for (const r of relations) {
+    if (!r.src || !r.dst) continue;
+    const a = proj(r.src), b = proj(r.dst), hub = (id, kind, label, data) => { const n = node(id, kind, label, data); edge(a, n, r.type); edge(b, n, r.type); };
+    if (r.type === "shared_secret" && (r.secrets || []).length) for (const s of r.secrets) hub(`s:${s.rule}|${s.masked}`, "secret", s.masked, {rule: s.rule, masked: s.masked});
+    else if (r.type === "shared_endpoint" && (r.hosts || []).length) for (const host of r.hosts) hub("h:" + host, "host", host, {host});
+    else if (r.type === "same_remote" && r.remote) hub("r:" + r.remote, "remote", lgShortRemote(r.remote), {remote: r.remote});
+    else edge(a, b, r.type, {via: r.via, archive: r.archive, rel: r});
+  }
+  return {nodes: [...nodes.values()], edges: [...edges.values()]};
+}
+const lgCurve = n => (n % 2 ? -Math.ceil(n / 2) : Math.ceil(n / 2));  // arêtes parallèles : 0, -1, +1, -2…
+const lgRadius = n => (n.kind === "project" || n.kind === "derived") ? 15 + Math.min(12, Math.sqrt(n.deg) * 4) : 8 + Math.min(5, n.deg);
+function lgNeighborhood(G, id, depth) {
+  const adj = new Map(), add = (x, y) => { if (!adj.has(x)) adj.set(x, []); adj.get(x).push(y); };
+  for (const e of G.edges) { add(e.src, e.dst); add(e.dst, e.src); }
+  const seen = new Set([id]); let frontier = [id];
+  for (let d = 0; d < depth; d++) {
+    const next = [];
+    for (const x of frontier) for (const y of adj.get(x) || []) if (!seen.has(y)) { seen.add(y); next.push(y); }
+    frontier = next;
+  }
+  return seen;
+}
+function lgLayout(G) {
+  const n = G.nodes.length, idx = new Map(G.nodes.map((nd, i) => [nd.id, i])), side = Math.max(700, Math.sqrt(n) * 120), W = side * 1.5, H = side;
+  const p = n ? forceLayout(n, G.edges.map(e => [idx.get(e.src), idx.get(e.dst)]), W, H) : [];
+  return {pos: new Map(G.nodes.map((nd, i) => [nd.id, {x: p[i].x, y: p[i].y, vx: 0, vy: 0}])), W, H};
+}
+/* Une étape de physique (ressorts le long des arêtes, répulsion, gravité faible). `pinned` : nœuds immobiles. Renvoie le plus grand déplacement. */
+function lgRelax(G, pos, vis, pinned, alpha) {
+  const by = new Map(G.nodes.map(n => [n.id, n])), ids = G.nodes.map(n => n.id).filter(id => vis.has(id)), F = new Map(ids.map(id => [id, [0, 0]]));
+  let cx = 0, cy = 0;
+  for (const id of ids) { cx += pos.get(id).x; cy += pos.get(id).y; }
+  cx /= ids.length || 1; cy /= ids.length || 1;
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+    const a = pos.get(ids[i]), b = pos.get(ids[j]);
+    let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+    if (d2 < 0.01) { dx = (i % 7) - 3 + 0.5; dy = (j % 5) - 2 + 0.5; d2 = dx * dx + dy * dy; }  // superposés : séparation déterministe
+    const d = Math.sqrt(d2), minD = lgRadius(by.get(ids[i])) + lgRadius(by.get(ids[j])) + 18, f = (2600 / d2) * (d < minD ? 3 : 1);
+    F.get(ids[i])[0] += dx / d * f; F.get(ids[i])[1] += dy / d * f; F.get(ids[j])[0] -= dx / d * f; F.get(ids[j])[1] -= dy / d * f;
+  }
+  for (const e of G.edges) {
+    if (!vis.has(e.src) || !vis.has(e.dst)) continue;
+    const a = pos.get(e.src), b = pos.get(e.dst), dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+    const rest = (by.get(e.src).kind === "project" || by.get(e.src).kind === "derived") && (by.get(e.dst).kind === "project" || by.get(e.dst).kind === "derived") ? 150 : 110, f = (d - rest) * 0.05;
+    F.get(e.src)[0] += dx / d * f; F.get(e.src)[1] += dy / d * f; F.get(e.dst)[0] -= dx / d * f; F.get(e.dst)[1] -= dy / d * f;
+  }
+  let moved = 0;
+  for (const id of ids) {
+    const q = pos.get(id), f = F.get(id);
+    if (pinned.has(id)) { q.vx = q.vy = 0; continue; }
+    q.vx = (q.vx + (f[0] + (cx - q.x) * 0.012) * alpha) * 0.55; q.vy = (q.vy + (f[1] + (cy - q.y) * 0.012) * alpha) * 0.55;
+    const m = Math.hypot(q.vx, q.vy), cap = 40;
+    if (m > cap) { q.vx *= cap / m; q.vy *= cap / m; }
+    q.x += q.vx; q.y += q.vy; moved = Math.max(moved, Math.hypot(q.vx, q.vy));
+  }
+  return moved;
+}
+/* Géométrie d'une arête entre deux nœuds de rayons ra et rb ; `curve` (0 = droite, ±1… = courbe) écarte les arêtes parallèles. */
+function lgEdgePath(a, ra, b, rb, curve, directed) {
+  let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+  if (d < 1e-6) { dx = 1; dy = 0; d = 1; }
+  const ux = dx / d, uy = dy / d, off = curve * 22, f = v => v.toFixed(1);
+  const x1 = a.x + ux * ra, y1 = a.y + uy * ra, x2 = b.x - ux * (rb + (directed ? 3 : 0)), y2 = b.y - uy * (rb + (directed ? 3 : 0));
+  const mx = (x1 + x2) / 2 - uy * off, my = (y1 + y2) / 2 + ux * off;
+  let angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+  if (angle > 90) angle -= 180;
+  if (angle < -90) angle += 180;  // le texte reste lisible (jamais à l'envers)
+  return {d: curve ? `M${f(x1)} ${f(y1)} Q${f(mx)} ${f(my)} ${f(x2)} ${f(y2)}` : `M${f(x1)} ${f(y1)} L${f(x2)} ${f(y2)}`,
+    lx: 0.25 * x1 + 0.5 * mx + 0.25 * x2, ly: 0.25 * y1 + 0.5 * my + 0.25 * y2, angle};
+}
+function lgFit(pos, ids, W, H, pad = 50) {
+  const pts = ids.map(id => pos.get(id)).filter(Boolean);
+  if (!pts.length) return {x: 0, y: 0, k: 1};
+  const xs = pts.map(q => q.x), ys = pts.map(q => q.y), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const k = Math.max(0.15, Math.min((W - 2 * pad) / Math.max(x1 - x0, 1), (H - 2 * pad) / Math.max(y1 - y0, 1), 1.6));
+  return {k, x: W / 2 - (x0 + x1) / 2 * k, y: H / 2 - (y0 + y1) / 2 * k};
+}
+function lgSearch(G, q) {
+  const needle = String(q || "").trim().toLowerCase();
+  return !needle ? [] : G.nodes.filter(n => [n.label, ...Object.values(n.data)].join(" ").toLowerCase().includes(needle));
+}
+/* Export autonome (sans DOM) : un SVG lisible tel quel dans un navigateur ou un éditeur. */
+function lgSvgString(G, pos, ids, edges, W, H, rel) {
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])), by = new Map(G.nodes.map(n => [n.id, n]));
+  const v = lgFit(pos, [...ids], W, H), out = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="system-ui,sans-serif">`,
+    `<defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>`,
+    `<rect width="${W}" height="${H}" fill="#ffffff"/>`, `<g transform="translate(${v.x.toFixed(1)} ${v.y.toFixed(1)}) scale(${v.k.toFixed(3)})">`];
+  const pair = {};
+  for (const e of edges) {
+    const key = [e.src, e.dst].sort().join("|"), n = pair[key] = (pair[key] ?? -1) + 1, a = by.get(e.src), b = by.get(e.dst), g = lgEdgePath(pos.get(e.src), lgRadius(a), pos.get(e.dst), lgRadius(b), lgCurve(n), e.directed);
+    out.push(`<path d="${g.d}" fill="none" stroke="${rel.color[e.type] || "#999"}" stroke-width="2"${e.directed ? ' marker-end="url(#a)"' : ""}/>`,
+      `<text x="${g.lx.toFixed(1)}" y="${(g.ly - 3).toFixed(1)}" font-size="9" text-anchor="middle" fill="#666" transform="rotate(${g.angle.toFixed(1)} ${g.lx.toFixed(1)} ${g.ly.toFixed(1)})">${esc(rel.label[e.type] || e.type)}</text>`);
+  }
+  for (const id of ids) {
+    const n = by.get(id), q = pos.get(id);
+    out.push(`<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="${lgRadius(n)}" fill="${LG_KINDS[n.kind].color}" stroke="#ffffff" stroke-width="2"/>`,
+      `<text x="${q.x.toFixed(1)}" y="${(q.y + lgRadius(n) + 13).toFixed(1)}" font-size="11" text-anchor="middle" fill="#212529">${esc(lgClip(n.label, 28))}</text>`);
+  }
+  return out.join("\n") + "\n</g>\n</svg>\n";
+}
+/* LG-MODEL:END */
+
+state.graph = {sel: null, selEdge: null, focus: 0, hideKinds: new Set(), pinned: new Set(), key: "", G: null, pos: null, view: null, physics: true, hits: null, raf: 0, justDragged: false};
+const LG_W = 1000, LG_H = 620;
+function graphModel() {
+  const g = state.graph, key = D.audit.id + "|" + D.relations.length + "|" + D.relations.map(r => r.type + r.src + r.dst).join("").length;
+  if (g.key !== key) {
+    Object.assign(g, {key, G: lgBuild(D.relations, byName), view: null, sel: null, selEdge: null, pinned: new Set(), hits: null});
+    g.pos = lgLayout(g.G).pos;
+  }
+  return g;
+}
+function graphVisible(g) {  // ce qui est affiché : filtres de la légende, projet choisi, mode « voisinage », plafond de lisibilité
+  const kindOf = new Map(g.G.nodes.map(n => [n.id, n.kind]));
+  let edges = g.G.edges.filter(e => !state.linkTypes.has(e.type) && !g.hideKinds.has(kindOf.get(e.src)) && !g.hideKinds.has(kindOf.get(e.dst)));
+  let ids = new Set(edges.flatMap(e => [e.src, e.dst]));
+  const restrict = center => { const near = lgNeighborhood({edges}, center, center === g.sel ? g.focus : 2); ids = new Set([...ids].filter(i => near.has(i))); edges = edges.filter(e => ids.has(e.src) && ids.has(e.dst)); };
+  if (state.project) { if (ids.has("p:" + state.project)) restrict("p:" + state.project); else { ids = new Set(); edges = []; } }  // projet sans lien : rien, pas « tout »
+  if (g.sel && g.focus > 0 && ids.has(g.sel)) restrict(g.sel);
+  const deg = new Map(g.G.nodes.map(n => [n.id, n.deg])), capped = ids.size > 400;
+  if (capped) { ids = new Set([...ids].sort((a, b) => deg.get(b) - deg.get(a)).slice(0, 400)); edges = edges.filter(e => ids.has(e.src) && ids.has(e.dst)); }
+  return {ids, edges, capped};
+}
+function graphSvg(g, vis) {
+  const by = new Map(g.G.nodes.map(n => [n.id, n])), nodes = g.G.nodes.filter(n => vis.ids.has(n.id));
+  if (!g.view) g.view = lgFit(g.pos, [...vis.ids], LG_W, LG_H);
+  const near = g.sel && g.focus === 0 ? lgNeighborhood({edges: vis.edges}, g.sel, 1) : null;
+  const pair = {}, edgeEls = vis.edges.map(e => {
+    const key = [e.src, e.dst].sort().join("|"), n = pair[key] = (pair[key] ?? -1) + 1;
+    const hit = svg("path", {class: "lg-hit", fill: "none", stroke: "transparent", "stroke-width": 12, onclick: ev => { ev.stopPropagation(); g.selEdge = e.id; g.sel = null; render(); }});
+    const line = svg("path", {class: "lg-edge" + (g.selEdge === e.id ? " sel" : ""), fill: "none", stroke: REL_COLOR[e.type] || "#999", "stroke-width": g.selEdge === e.id ? 3.5 : 2, "marker-end": e.directed ? "url(#lg-arrow)" : null});
+    const label = svg("text", {class: "lg-el", "text-anchor": "middle"}, REL_FR[e.type] || e.type);
+    return {e, n, hit, line, label, g: svg("g", {class: "lg-edge-g" + (near && !(e.src === g.sel || e.dst === g.sel) ? " dim" : "")}, hit, line, label)};
   });
-  const nodes = names.map((nm, i) => svg("g", {class: "node", onclick: () => { state.project = nm; render(); }},
-    svg("circle", {cx: pos[i].x.toFixed(1), cy: pos[i].y.toFixed(1), r: 8, fill: (byName[nm] || {}).parent ? "#868e96" : "#3b5bdb", stroke: "#fff", "stroke-width": 2}),
-    svg("text", {x: pos[i].x.toFixed(1), y: (pos[i].y - 13).toFixed(1), "text-anchor": "middle"}, nm.length > 26 ? nm.slice(0, 25) + "…" : nm)));
-  const graph = names.length ? svg("svg", {class: "graph", viewBox: `0 0 ${W} ${Ht}`, role: "img", "aria-label": "Graphe des liens entre projets"},
-    svg("defs", {}, svg("marker", {id: "arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse"},
-      svg("path", {d: "M 0 0 L 10 5 L 0 10 z", fill: "context-stroke"}))), lines, nodes) : null;
+  const nodeEls = nodes.map(n => {
+    const r = lgRadius(n), sel = g.sel === n.id;
+    const circle = svg("circle", {r, fill: LG_KINDS[n.kind].color, stroke: sel ? "#f59f00" : "#fff", "stroke-width": sel ? 4 : 2, "stroke-dasharray": g.pinned.has(n.id) ? "4 2" : "none"});
+    const title = svg("title", {}, `${LG_KINDS[n.kind].label} : ${n.label}${g.pinned.has(n.id) ? " (épinglé : double-clic pour libérer)" : ""}`);
+    const el = svg("g", {class: "lg-node" + (sel ? " sel" : "") + (near && !near.has(n.id) ? " dim" : ""), onclick: ev => { ev.stopPropagation(); if (g.justDragged) return; g.sel = n.id; g.selEdge = null; render(); },
+      ondblclick: ev => { ev.stopPropagation(); g.pinned.has(n.id) ? g.pinned.delete(n.id) : g.pinned.add(n.id); render(); }}, circle, title,
+      svg("text", {class: "lg-label", y: r + 13, "text-anchor": "middle"}, lgClip(n.label, 26)));
+    return {n, el, circle};
+  });
+  const viewport = svg("g", {class: "lg-viewport"});
+  const paint = () => {
+    viewport.setAttribute("transform", `translate(${g.view.x.toFixed(1)} ${g.view.y.toFixed(1)}) scale(${g.view.k.toFixed(3)})`);
+    for (const {n, el, circle} of nodeEls) {
+      const q = g.pos.get(n.id); el.setAttribute("transform", `translate(${q.x.toFixed(1)} ${q.y.toFixed(1)})`);
+      circle.setAttribute("stroke-dasharray", g.pinned.has(n.id) ? "4 2" : "none");  // l'épinglage se voit tout de suite, sans re-dessiner
+    }
+    for (const x of edgeEls) {
+      const geo = lgEdgePath(g.pos.get(x.e.src), lgRadius(by.get(x.e.src)), g.pos.get(x.e.dst), lgRadius(by.get(x.e.dst)), lgCurve(x.n), x.e.directed);
+      x.hit.setAttribute("d", geo.d); x.line.setAttribute("d", geo.d);
+      x.label.setAttribute("transform", `translate(${geo.lx.toFixed(1)} ${(geo.ly - 3).toFixed(1)}) rotate(${geo.angle.toFixed(1)})`);
+    }
+  };
+  viewport.append(...edgeEls.map(x => x.g), ...nodeEls.map(x => x.el));
+  paint();
+  // --- interactions : déplacer un nœud (reste épinglé), panoramique, zoom, ajuster ---
+  const root = svg("svg", {class: "lgsvg", viewBox: `0 0 ${LG_W} ${LG_H}`, role: "img", "aria-label": "Graphe des liens entre projets", preserveAspectRatio: "xMidYMid meet"},
+    svg("defs", {}, svg("marker", {id: "lg-arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse"}, svg("path", {d: "M 0 0 L 10 5 L 0 10 z", fill: "context-stroke"}))), viewport);
+  const toSvg = ev => { const r = root.getBoundingClientRect ? root.getBoundingClientRect() : {left: 0, top: 0, width: LG_W, height: LG_H}; return {x: (ev.clientX - r.left) * LG_W / (r.width || LG_W), y: (ev.clientY - r.top) * LG_H / (r.height || LG_H)}; };
+  const settle = alpha => {
+    const frozen = () => new Set([...g.pinned, ...(g.dragId ? [g.dragId] : [])]);
+    if (!g.physics) return;
+    if (typeof requestAnimationFrame === "function") {
+      cancelAnimationFrame(g.raf);
+      let a = alpha; const loop = () => { const m = lgRelax(g.G, g.pos, vis.ids, frozen(), a); a *= 0.95; paint(); if (a > 0.03 && m > 0.05) g.raf = requestAnimationFrame(loop); };
+      g.raf = requestAnimationFrame(loop);
+    } else { for (let i = 0, a = alpha; i < 60; i++, a *= 0.95) lgRelax(g.G, g.pos, vis.ids, frozen(), a); paint(); }
+  };
+  let drag = null;
+  for (const {n, el} of nodeEls) el.addEventListener("pointerdown", ev => { ev.stopPropagation(); drag = {kind: "node", id: n.id, start: toSvg(ev), moved: false}; });
+  root.addEventListener("pointerdown", ev => { drag = {kind: "pan", start: toSvg(ev), v0: {...g.view}, moved: false}; });
+  root.addEventListener("pointermove", ev => {
+    if (!drag) return;
+    const p = toSvg(ev), dx = p.x - drag.start.x, dy = p.y - drag.start.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    if (drag.kind === "pan") { g.view = {...drag.v0, x: drag.v0.x + dx, y: drag.v0.y + dy}; paint(); return; }
+    const q = g.pos.get(drag.id); g.dragId = drag.id;
+    q.x = (p.x - g.view.x) / g.view.k; q.y = (p.y - g.view.y) / g.view.k; q.vx = q.vy = 0;
+    paint(); settle(0.5);
+  });
+  root.addEventListener("pointerup", () => {
+    if (drag && drag.moved) {  // le navigateur enverra un « click » après le glisser : on l'ignore (ni sélection, ni désélection)
+      g.justDragged = true; setTimeout(() => { g.justDragged = false; }, 0);
+      if (drag.kind === "node") { g.pinned.add(drag.id); g.dragId = null; paint(); if (g.afterPin) g.afterPin(); settle(0.6); }
+    }
+    drag = null;
+  });
+  root.addEventListener("wheel", ev => {
+    if (ev.preventDefault) ev.preventDefault();
+    const p = toSvg(ev), k0 = g.view.k, k1 = Math.min(4, Math.max(0.15, k0 * (ev.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    g.view = {k: k1, x: p.x - (p.x - g.view.x) * (k1 / k0), y: p.y - (p.y - g.view.y) * (k1 / k0)}; paint();
+  });
+  root.addEventListener("dblclick", () => { g.view = lgFit(g.pos, [...vis.ids], LG_W, LG_H); paint(); });
+  root.addEventListener("click", () => { if (!g.justDragged && (g.sel || g.selEdge)) { g.sel = null; g.selEdge = null; render(); } });
+  return root;
+}
+function graphInspector(g, vis) {
+  const by = new Map(g.G.nodes.map(n => [n.id, n])), pick = id => () => { g.sel = id; g.selEdge = null; render(); };
+  const relRows = n => {
+    const out = [];
+    for (const e of g.G.edges) {
+      const other = e.src === n.id ? e.dst : e.dst === n.id ? e.src : null;
+      if (!other) continue;
+      const o = by.get(other), shared = o.kind !== "project" && o.kind !== "derived" ? g.G.edges.filter(x => x.dst === o.id && x.src !== n.id).map(x => by.get(x.src).label) : [];
+      out.push(h("div", {class: "crow", onclick: pick(other)}, h("span", {class: "chip", style: `border-left:4px solid ${REL_COLOR[e.type] || "#999"}`}, `${REL_FR[e.type] || e.type}${e.directed ? (e.src === n.id ? " →" : " ←") : ""}`),
+        h("span", {style: `color:${LG_KINDS[o.kind].color};font-weight:600`}, lgClip(o.label, 30)), shared.length ? h("span", {class: "muted"}, `avec ${shared.join(", ")}`) : null));
+    }
+    return out;
+  };
+  if (g.selEdge) {
+    const e = g.G.edges.find(x => x.id === g.selEdge), a = e && by.get(e.src), b = e && by.get(e.dst);
+    if (e) return card("Relation", kv([["Type", h("span", {class: "chip", style: `border-left:4px solid ${REL_COLOR[e.type] || "#999"}`}, REL_FR[e.type] || e.type)], ["De", a.label], ["Vers", b.label],
+      ["Détail", e.rel ? relDetail(e.rel) : (b.kind === "secret" ? `${b.data.rule} ${b.data.masked}` : b.kind === "host" ? b.data.host : b.kind === "remote" ? b.data.remote : "")]]));
+  }
+  const n = g.sel && by.get(g.sel);
+  if (!n) {
+    const counts = Object.entries(LG_KINDS).map(([k, v]) => [k, v, g.G.nodes.filter(x => x.kind === k).length]).filter(x => x[2]);
+    return card("Inspecteur", h("div", {style: "padding:10px 14px"}, h("div", {class: "muted"}, `${vis.ids.size} nœud(s), ${vis.edges.length} relation(s) affiché(s)`),
+      counts.map(([k, v, c]) => h("div", {}, h("span", {class: "chip", style: `background:${v.color};color:#fff`}, String(c)), " " + v.label)),
+      h("p", {class: "muted"}, "Cliquez un nœud ou une relation pour l'inspecter. Glissez un nœud pour le déplacer (il reste épinglé ; double-clic pour le libérer), le fond pour déplacer la vue, la molette pour zoomer, double-clic sur le fond pour ajuster.")));
+  }
+  const rows = [["Type", h("span", {class: "chip", style: `background:${LG_KINDS[n.kind].color};color:#fff`}, LG_KINDS[n.kind].label)], ["Nom", n.label], ["Relations", String(n.deg)], ["Épinglé", g.pinned.has(n.id) ? "oui (double-clic pour libérer)" : "non"]];
+  let actions = [];
+  if (n.kind === "project" || n.kind === "derived") {
+    const p = byName[n.data.project] || {}, mine = list => nGroups(list.filter(x => x.project === n.data.project));
+    rows.push(["Chemin", p.path], ["Git", p.is_git ? "oui" + (p.head_commit ? ` @ ${short(p.head_commit)}` : "") : "non"], ["Archive d'origine", p.origin],
+      ["Constats", h("span", {}, chip(`${mine(D.secrets)} secret(s)`, mine(D.secrets) ? "bad" : "ok"), " ", chip(`${mine(D.sast)} SAST`, mine(D.sast) ? "warn" : "ok"), " ", chip(`${mine(D.vulns)} dépendance(s)`, mine(D.vulns) ? "warn" : "ok"))]);
+    const go = (tab) => () => { state.project = n.data.project; state.tab = tab; render(); };
+    actions = [h("button", {class: "tbtn", onclick: () => { state.project = n.data.project; render(); }}, "Filtrer sur ce projet"), h("button", {class: "tbtn", onclick: go("secrets")}, "Ses secrets"),
+      h("button", {class: "tbtn", onclick: go("sast")}, "Son SAST"), h("button", {class: "tbtn", onclick: go("dependances")}, "Ses dépendances")];
+  } else if (n.kind === "secret") {
+    rows.push(["Règle", n.data.rule], ["Valeur (masquée)", n.data.masked]);
+    actions = [h("button", {class: "tbtn", onclick: () => { state.q = n.data.masked; document.getElementById("q").value = state.q; state.tab = "secrets"; render(); }}, "Chercher dans les secrets")];
+  } else if (n.kind === "host") rows.push(["Hôte", n.data.host]);
+  else if (n.kind === "remote") rows.push(["Dépôt", n.data.remote]);
+  return card("Inspecteur", kv(rows), actions.length ? h("div", {class: "triagebox", style: "padding:0 12px 10px"}, actions) : null,
+    h("div", {class: "muted", style: "padding:6px 12px"}, `Relations (${n.deg}) : cliquez pour naviguer`), h("div", {}, relRows(n)));
+}
+function viewLinks() {
+  if (!D.relations.length) return card("Liens entre projets", empty("Aucun lien détecté (dépendances, dépôt d'origine, secrets ou hôtes partagés). L'outil « links » est actif par défaut ; il lit manifestes, remotes git et configurations."));
+  const g = graphModel();
+  if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(g.raf);
+  const vis = graphVisible(g), types = [...new Set(D.relations.map(r => r.type))];
+  const base = D.relations.filter(r => !state.project || r.src === state.project || r.dst === state.project);
+  const rels = base.filter(r => !state.linkTypes.has(r.type) && matchesQ(r.src, r.dst, REL_FR[r.type], relDetail(r)));
+  const toggle = (set, k) => () => { set.has(k) ? set.delete(k) : set.add(k); render(); };
+  const kinds = Object.entries(LG_KINDS).filter(([k]) => g.G.nodes.some(n => n.kind === k));
+  const legend = h("div", {class: "filters"},
+    kinds.map(([k, v]) => h("button", {class: "toggle", "aria-pressed": !g.hideKinds.has(k), title: "Afficher / masquer ce type de nœud", style: `border-left:4px solid ${v.color}`, onclick: toggle(g.hideKinds, k)}, `${v.label} (${g.G.nodes.filter(n => n.kind === k).length})`)),
+    h("span", {class: "muted"}, "|"),
+    types.map(t => h("button", {class: "toggle", "aria-pressed": !state.linkTypes.has(t), title: "Afficher / masquer ce type de relation", style: `border-left:4px solid ${REL_COLOR[t] || "#999"}`, onclick: toggle(state.linkTypes, t)},
+      `${REL_FR[t] || t} (${D.relations.filter(r => r.type === t).length})`)));
+  const search = h("input", {type: "text", placeholder: "Chercher un nœud…", value: g.q || "", onchange: e => {
+    g.q = e.target.value; g.hits = lgSearch(g.G, g.q);
+    if (g.hits.length) { g.sel = g.hits[0].id; g.selEdge = null; const q = g.pos.get(g.sel), k = Math.max(1, g.view ? g.view.k : 1); g.view = {k, x: LG_W / 2 - q.x * k, y: LG_H / 2 - q.y * k}; }
+    render(); }});
+  const releaseLabel = () => `Libérer les nœuds (${g.pinned.size})`;
+  const release = h("button", {class: "tbtn", disabled: g.pinned.size ? null : "", onclick: () => { g.pinned.clear(); render(); }}, releaseLabel());
+  g.afterPin = () => { release.replaceChildren(document.createTextNode(releaseLabel())); release.disabled = !g.pinned.size; };  // le glisser ne re-dessine pas : on met le compteur à jour sur place
+  const FOCUS = ["Isoler : non", "Isoler : voisins", "Isoler : voisins de voisins"];
+  const bar = h("div", {class: "filters"}, labelled("Chercher", search), g.hits ? h("span", {class: "muted"}, `${g.hits.length} résultat(s)`) : null,
+    h("button", {class: "tbtn", onclick: () => { g.view = null; render(); }}, "Ajuster"),
+    h("button", {class: "toggle", "aria-pressed": g.physics, title: "Les voisins suivent un nœud déplacé", onclick: () => { g.physics = !g.physics; render(); }}, "Physique"),
+    h("button", {class: "toggle", "aria-pressed": g.focus > 0, disabled: g.sel ? null : "", title: "Ne garder que le voisinage du nœud sélectionné", onclick: () => { g.focus = (g.focus + 1) % 3; render(); }}, FOCUS[g.focus]),
+    release,
+    h("button", {class: "tbtn", title: "Télécharge le graphe affiché en SVG autonome", onclick: () => {
+      if (typeof Blob === "undefined" || typeof URL === "undefined") return;
+      const text = lgSvgString(g.G, g.pos, vis.ids, vis.edges, LG_W, LG_H, {color: REL_COLOR, label: REL_FR}), a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([text], {type: "image/svg+xml"})); a.download = "liens.svg"; a.click(); }}, "Exporter SVG"));
   const t = table("links", [
     {key: "type", label: "Lien", render: r => h("span", {class: "chip", style: `border-left:4px solid ${REL_COLOR[r.type] || "#999"}`}, REL_FR[r.type] || r.type)},
     {key: "src", label: "Projets", sort: r => r.src + r.dst, render: r => `${r.src} ${DIRECTED.has(r.type) ? "→" : "↔"} ${r.dst}`},
     {key: "detail", label: "Détail", sort: r => relDetail(r), render: r => relDetail(r)},
   ], rels, {defaultSort: {key: "type", dir: "asc"}, rowId: r => `${r.type}|${r.src}|${r.dst}`, limit: 1500,
     detail: r => kv([["Type", REL_FR[r.type] || r.type], ["De", r.src], ["Vers", r.dst], ["Détail", relDetail(r)]])});
-  return [legend, graph ? card(`Graphe (${names.length} projet(s) ; cliquer un projet pour filtrer)`, graph) : null, card("Liens", rels.length ? t : empty("Aucun lien pour ces filtres."))];
+  const graph = vis.ids.size ? graphSvg(g, vis) : empty("Aucun nœud pour ces filtres : réactivez un type de nœud ou de relation dans la légende.");
+  return [legend, bar, h("div", {class: "lgrid"}, card(`Graphe (${vis.ids.size} nœud(s), ${vis.edges.length} relation(s)${vis.capped ? " : plafonné aux 400 plus connectés, filtrez pour voir le reste" : ""})`, graph),
+    graphInspector(g, vis)), card("Liens", rels.length ? t : empty("Aucun lien pour ces filtres."))];
 }
 
 /* ---------- Constats de l'auditeur ---------- */
@@ -914,7 +1196,7 @@ function viewJob() {
     h("div", {class: "triagebox"}, h("button", {class: "tbtn on", disabled: running ? "" : null, onclick: launch}, running ? "Audit en cours…" : "Lancer l'audit"),
       h("span", {class: "muted"}, "Un seul audit à la fois. Les outils non installés sont signalés dans l'onglet Exécutions."))));
   const startCrit = () => run(async () => {
-    await api("/api/critiq", {method: "POST", body: {run: D.audit.id}});
+    await api("/api/critiq", {method: "POST", body: {run: D.audit.id, more_code: state.critMore ?? !!cq.more_code}});
     state.job = {state: "running", log: [], done: 0, total: 0, phase: 5};
     render();
     await pollJob();
@@ -922,6 +1204,7 @@ function viewJob() {
   const cq = D.options.critiq || {};
   const critCard = card("Critique IA du run affiché", h("div", {class: "form"},
     h("div", {class: "muted"}, `Demande l'avis de « ${cq.model || "(modèle non configuré : critiq.model)"} » (${cq.base_url || ""}) sur les résultats. Des extraits de code sont envoyés à ce moteur ; secrets jamais envoyés en clair. Avis consultatifs.`),
+    h("div", {class: "checks"}, box("autoriser le modèle à demander plus de code (fichiers entiers, dossiers, davantage de tours) : il le reçoit automatiquement ; secrets et fichiers exclus restent protégés", state.critMore ?? !!cq.more_code, v => { state.critMore = v; })),
     h("div", {class: "triagebox"}, h("button", {class: "tbtn on", disabled: running || !cq.model ? "" : null, onclick: startCrit}, "Lancer la critique IA"))));
   const status = job ? card(`Audit ${job.run_id || ""} — ${{running: "en cours", finished: "terminé", error: "en erreur", idle: "inactif"}[job.state] || job.state}`, h("div", {class: "form"},
     job.total ? h("div", {}, h("div", {class: "progress"}, h("span", {style: `width:${Math.round(100 * job.done / job.total)}%`})),

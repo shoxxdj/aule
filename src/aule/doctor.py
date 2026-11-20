@@ -94,7 +94,8 @@ EXPECT: dict[str, list[tuple[str, dict, int, str]]] = {
 def _hint(tool: str, text: str) -> str:
     low = text.lower()
     if re.search(r"unknown flag|unrecognized|no such option|unknown command|invalid option|usage:", low):
-        return f"version incompatible ? comparez cmd.txt avec `{tool} --help`"
+        binary = getattr(load_plugins().get(tool), "binary", tool)  # la commande réelle (git-extractor-rs), pas le nom du plugin (gittools)
+        return f"version incompatible ? comparez cmd.txt avec `{binary} --help`"
     if tool == "codeql" and re.search(r"resolve|pack|quer", low):
         return "paquets de requêtes absents : aule update codeql (ou CodeQL bundle)"
     if re.search(r"could not resolve host|connection|network|dial tcp|timed out|unreachable", low):
@@ -157,7 +158,7 @@ def run_doctor(config: Config, data_dir: Path, *, only: list[str] | None = None,
             if name == "dependency-check":
                 tc.options.setdefault("data_path", str(data_dir / "depcheck-db"))
             if tool.resolve(tc) is None:
-                checks.append(Check(name, "SKIP", f"introuvable : '{tc.path or tool.binary}'", f"renseignez tools.{name}.path dans aule.yaml"))
+                checks.append(Check(name, "SKIP", f"introuvable : '{tool.wanted(tc)}'", f"renseignez tools.{name}.path dans aule.yaml"))
                 continue
             if (why := _ready(tool, tc, data_dir, full)):
                 checks.append(Check(name, "SKIP", why))

@@ -53,11 +53,11 @@ class CompatibilityTest(AuditCase):
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
         self.assertEqual(load_config(None).critiq.enabled, False)                              # aucun fichier : valeurs par défaut
-        (self.tmp / "audit.yaml").write_text("critiq:\n  model: ancien\n")
-        self.assertEqual(load_config(None).critiq.model, "ancien")                             # l'ancien nom est toujours reconnu
-        (self.tmp / "aule.yaml").write_text("critiq:\n  model: nouveau\n")
-        self.assertEqual(load_config(None).critiq.model, "nouveau")                            # le nouveau l'emporte
-        self.assertEqual(load_config(self.tmp / "audit.yaml").critiq.model, "ancien")          # --config explicite : on obéit
+        (self.tmp / "audit.yaml").write_text("critiq:\n  max_rounds: 2\n")
+        self.assertEqual(load_config(None).critiq.max_rounds, 2)                             # l'ancien nom est toujours reconnu
+        (self.tmp / "aule.yaml").write_text("critiq:\n  max_rounds: 5\n")
+        self.assertEqual(load_config(None).critiq.max_rounds, 5)                            # le nouveau l'emporte
+        self.assertEqual(load_config(self.tmp / "audit.yaml").critiq.max_rounds, 2)          # --config explicite : on obéit
 
     def test_passphrase_variables(self):
         args = SimpleNamespace(passphrase_file=None)

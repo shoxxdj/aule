@@ -5,16 +5,29 @@
 #   docker build -f docker/Dockerfile -t aule \
 #     --build-arg GITLEAKS_VERSION=... --build-arg TRUFFLEHOG_VERSION=... --build-arg OSV_VERSION=... \
 #     --build-arg TRIVY_VERSION=... --build-arg OPENGREP_VERSION=... --build-arg DEPCHECK_VERSION=... \
-#     --build-arg CODEQL_VERSION=... --build-arg CHECKOV_VERSION=... --build-arg GITTOOLS_COMMIT=... .
+#     --build-arg CODEQL_VERSION=... --build-arg CHECKOV_VERSION=... --build-arg GIT_TOOLS_RS_REF=<hash de commit> .
 #
 # Usage (le code à auditer est monté en LECTURE SEULE, les résultats vont dans le volume /work) :
 #   docker run --rm -it -v "$PWD/mission:/work" -v "/chemin/du/code:/audit:ro" -p 127.0.0.1:8765:8765 aule doctor
 #   docker run --rm -it -v "$PWD/mission:/work" -v "/chemin/du/code:/audit:ro" aule run /audit --unpack --history
 #   docker run --rm -it -v "$PWD/mission:/work" -p 127.0.0.1:8765:8765 aule serve --host 0.0.0.0 ...   # voir note serveur
+# Critique IA : le moteur est dans llm.yaml (clé d'API comprise, chmod 600, jamais dans l'image), lu À CÔTÉ de /etc/aule/aule.yaml :
+#   docker run ... -v "$PWD/llm.yaml:/etc/aule/llm.yaml:ro" aule critiq check
 #
 # Note serveur : `aule serve` refuse toute adresse non locale (il sert des secrets en clair). Dans un conteneur il faut
 # publier le port UNIQUEMENT sur 127.0.0.1 de l'hôte (-p 127.0.0.1:8765:8765) et lancer le serveur avec un nom de
 # machine qui résout en boucle locale dans le conteneur ; adaptez selon votre réseau Docker ou utilisez un tunnel SSH.
+# git-extractor-rs (https://github.com/shoxxdj/git-tools-rs) : compilé ici. Ce dépôt n'a ni étiquette ni publication : ÉPINGLEZ un hash de commit
+# (GIT_TOOLS_RS_REF), sinon vous compileriez le code d'une branche qui peut changer. Seul git-extractor-rs est copié dans l'image finale
+# (git-dumper, qui télécharge un .git exposé depuis un site, n'a pas sa place dans un audit de code livré).
+FROM rust:1-slim-bookworm AS gitrs
+ARG GIT_TOOLS_RS_REF
+RUN test -n "${GIT_TOOLS_RS_REF}" || (echo "GIT_TOOLS_RS_REF requis : hash de commit de git-tools-rs à compiler" >&2; exit 1)
+RUN cargo install --locked --git https://github.com/shoxxdj/git-tools-rs --rev "${GIT_TOOLS_RS_REF}" --root /out
+# Le binaire s'appelle git-extractor-rs ou git-extractor selon la version : on le normalise (Aulë cherche les deux, mais le COPY ci-dessous doit viser un nom certain).
+RUN for n in git-extractor-rs git-extractor; do if [ -x "/out/bin/$n" ]; then install -m 0755 "/out/bin/$n" /out/git-extractor-rs; exit 0; fi; done; \
+    echo "aucun binaire git-extractor(-rs) produit par cette révision" >&2; exit 1
+
 FROM python:3.12-slim-bookworm
 
 ARG GITLEAKS_VERSION
@@ -25,7 +38,6 @@ ARG OPENGREP_VERSION
 ARG DEPCHECK_VERSION
 ARG CODEQL_VERSION
 ARG CHECKOV_VERSION
-ARG GITTOOLS_COMMIT
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git cloc gnupg curl ca-certificates unzip bash default-jre-headless \
@@ -48,10 +60,9 @@ RUN set -eux; \
     # CodeQL bundle : CLI + requêtes précompilées (utilisable hors ligne)
     curl -fsSL "https://github.com/github/codeql-action/releases/download/codeql-bundle-v${CODEQL_VERSION}/codeql-bundle-linux64.tar.gz" | tar -xz -C /opt/tools; \
     ln -s /opt/tools/codeql/codeql /usr/local/bin/codeql; \
-    # GitTools (Extractor) à un commit précis
-    git clone -q https://github.com/internetwache/GitTools /opt/tools/GitTools && git -C /opt/tools/GitTools checkout -q "${GITTOOLS_COMMIT}"; \
     pip install --no-cache-dir "checkov==${CHECKOV_VERSION}" uv
 
+COPY --from=gitrs /out/git-extractor-rs /usr/local/bin/git-extractor-rs
 COPY . /opt/aule
 WORKDIR /opt/aule
 RUN uv sync --extra export --no-dev || uv sync --extra export

@@ -22,7 +22,8 @@ from urllib.parse import urlparse
 
 import yaml
 
-SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "target", "dist", "build", ".tox", ".gradle", ".idea"}
+from .models import SKIP_DIRS
+
 MAX_FILES, MAX_URL_FILES, MAX_HOSTS = 20_000, 3_000, 500
 MAX_TEXT, MAX_MANIFEST = 512 * 1024, 2 * 1024 * 1024
 TEXT_EXT = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".java", ".kt", ".go", ".rb", ".php", ".cs", ".rs", ".yml",

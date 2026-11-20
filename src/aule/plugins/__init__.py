@@ -4,7 +4,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 
-from ..config import Config
+from ..config import TOOL_ALIASES, Config
 from .base import _REGISTRY, RunContext, Tool, ToolError
 
 __all__ = ["RunContext", "Tool", "ToolError", "load_plugins", "select_tools"]
@@ -21,6 +21,7 @@ def select_tools(config: Config, names: list[str] | None = None) -> list[Tool]:
     """--tools explicite : exactement ces outils (même s'ils sont désactivés par défaut).
     Sinon : outils activés par défaut, ajustés par `enabled:` dans aule.yaml."""
     registry = load_plugins()
+    names = [TOOL_ALIASES.get(n, n) for n in names or []]
     unknown = [n for n in list(names or []) + list(config.tools) if n not in registry]
     if unknown:
         raise ValueError(f"outil(s) inconnu(s) : {', '.join(sorted(set(unknown)))} "

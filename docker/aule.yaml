@@ -1,9 +1,7 @@
 # Configuration de l'image Docker : tous les outils sont installés dans le PATH ou à des chemins fixes.
 unpack: {enabled: false}
 tools:
-  gittools:
-    path: /opt/tools/GitTools/Extractor/extractor.sh
-    launcher: [bash]
+  gittools: {}                                                   # git-extractor-rs, dans le PATH de l'image
   # outils optionnels à activer ici ou avec --with : opengrep, dependency-check, codeql, trufflehog, osv-scanner, trivy, checkov
   opengrep:
     options: {rules_path: /work/data/rules/opengrep-rules}     # aule update opengrep (réseau), ou volume pré-rempli

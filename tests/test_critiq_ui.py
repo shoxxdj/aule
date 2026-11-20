@@ -70,8 +70,8 @@ class CritiqServerBase(CritiqCase):
         super().setUp()
         self.start(self.cfg)
 
-    def start(self, critiq_cfg):
-        config = dataclasses.replace(self.config, critiq=critiq_cfg)
+    def start(self, critiq_cfg, llm=None):
+        config = dataclasses.replace(self.config, critiq=critiq_cfg, llm=llm or self.llm)
         self.server = make_server(self.data / "audit.db", self.data, config, port=0, reveal=True)
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -115,16 +115,16 @@ class CritiqServerTest(CritiqServerBase):
         self.assertEqual(self.call("POST", "/api/critiq", {"kinds": ["nope"]})[0], 400)
 
     def test_job_errors_are_reported_not_hung(self):
-        self.start(dataclasses.replace(self.cfg, base_url="http://127.0.0.1:1", timeout=3))
+        self.start(self.cfg, llm=dataclasses.replace(self.llm, url="http://127.0.0.1:1", timeout=3))
         self.assertEqual(self.call("POST", "/api/critiq", {})[0], 202)
         snap = self.wait()
         self.assertEqual(snap["state"], "error")
         self.assertIn("injoignable", snap["error"])
 
     def test_requires_a_configured_model_and_refuses_concurrent_tasks(self):
-        self.start(dataclasses.replace(self.cfg, model=None))
+        self.start(self.cfg, llm=dataclasses.replace(self.llm, model=None))
         status, body = self.call("POST", "/api/critiq", {})
-        self.assertEqual((status, "critiq.model" in body["error"]), (400, True))
+        self.assertEqual((status, "llm.yaml" in body["error"]), (400, True))
         self.start(self.cfg)
         self.ollama.responder = lambda p, n: ("sleep", 1) if n == 0 else default(p, n)
         self.assertEqual(self.call("POST", "/api/critiq", {})[0], 202)

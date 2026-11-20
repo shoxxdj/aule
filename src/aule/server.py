@@ -11,6 +11,7 @@ Sécurité (le serveur sert des secrets en clair) :
 """
 from __future__ import annotations
 
+import dataclasses
 import hmac
 import ipaddress
 import json
@@ -32,7 +33,7 @@ from .db import FINDING_STATUSES, SEVERITIES, TRIAGE_STATUSES, Database
 from .diff import diff_runs
 from .export import FORMATS, ExportError, collect, write_export
 from .critiq import run_critique
-from .llm import LLMError
+from .llm import LLMError, public_url
 from .orchestrator import AuditError, run_audit
 from .plugins import load_plugins, select_tools
 from .rawview import CACHE, import_sarif, json_node, json_rows, list_tree, read_text, sarif_files, sarif_results, sarif_rules, sarif_summary
@@ -80,15 +81,17 @@ class JobManager:
         self.thread = threading.Thread(target=self._work, args=(root, tool_names, unpack, exclude, critiq, label), daemon=True)
         self.thread.start()
 
-    def start_critique(self, run_id: str, kinds: tuple[str, ...] | None, force: bool) -> None:
+    def start_critique(self, run_id: str, kinds: tuple[str, ...] | None, force: bool, more_code: bool | None = None) -> None:
         self._begin(run_id)
-        self.thread = threading.Thread(target=self._work_critique, args=(run_id, kinds, force), daemon=True)
+        self.thread = threading.Thread(target=self._work_critique, args=(run_id, kinds, force, more_code), daemon=True)
         self.thread.start()
 
-    def _work_critique(self, run_id: str, kinds, force: bool) -> None:
+    def _work_critique(self, run_id: str, kinds, force: bool, more_code: bool | None = None) -> None:
         db = Database(self.db_path)
+        cfg = self.config.critiq if more_code is None else dataclasses.replace(self.config.critiq, allow_more_code=more_code)
+        llm = self.config.llm  # la case à cocher de l'interface l'emporte sur le fichier
         try:
-            run_critique(db, self.data_dir, run_id, self.config.critiq, kinds=kinds, force=force, log=self._log, progress=self._progress)
+            run_critique(db, self.data_dir, run_id, cfg, llm=llm, kinds=kinds, force=force, log=self._log, progress=self._progress)
             with self.lock:
                 self.state.update(state="finished", run_id=run_id)
         except (LLMError, KeyError) as exc:
@@ -157,7 +160,8 @@ class AuditServer(ThreadingHTTPServer):
     def live_options(self, db: Database) -> dict[str, Any]:
         registry = load_plugins()
         enabled = {t.name for t in select_tools(self.config)}
-        return {"live": True, "token": self.token, "critiq": {"model": self.config.critiq.model, "base_url": self.config.critiq.base_url,
+        llm = self.config.llm
+        return {"live": True, "token": self.token, "critiq": {"model": llm.model if llm else None, "more_code": self.config.critiq.allow_more_code, "base_url": public_url(llm.url) if llm else "", "provider": llm.provider if llm else None,
                                                               "enabled": self.config.critiq.enabled},
                 "audits": [{k: a[k] for k in ("id", "label", "status", "root", "started_at")} for a in db.list_audits()],
                 "tools": [{"name": t.name, "enabled": t.name in enabled, "available": t.resolve(self.config.tool(t.name)) is not None,
@@ -591,9 +595,12 @@ def api_job_start(h: Handler, db: Database, q: dict, body: dict):
 
 
 def api_critiq(h: Handler, db: Database, q: dict, body: dict):
-    cfg = h.server.config.critiq
-    if not cfg.model:
-        raise ApiError(400, "aucun modèle configuré : renseignez critiq.model dans aule.yaml")
+    llm = h.server.config.llm
+    if not (llm and llm.model):
+        raise ApiError(400, "aucun modèle configuré : renseignez `model` dans llm.yaml")
+    more = body.get("more_code")
+    if more is not None and not isinstance(more, bool):
+        raise ApiError(400, "more_code : booléen attendu (true ou false)")
     kinds = None
     if body.get("kinds"):
         mapped = [CRITIQ_KINDS.get(k) for k in _strs(body, "kinds")]
@@ -601,7 +608,7 @@ def api_critiq(h: Handler, db: Database, q: dict, body: dict):
             raise ApiError(400, "kinds : valeurs admises : secret, sast, vuln")
         kinds = tuple(dict.fromkeys(mapped))
     try:
-        h.server.jobs.start_critique(h._run(db, {"run": body.get("run")} if body.get("run") else {}), kinds, bool(body.get("force")))
+        h.server.jobs.start_critique(h._run(db, {"run": body.get("run")} if body.get("run") else {}), kinds, bool(body.get("force")), more)
     except JobBusy:
         raise ApiError(409, "une tâche est déjà en cours")
     return 202, {"started": True}

@@ -17,7 +17,6 @@ Options aule.yaml (tools.dependency-check.options) :
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
@@ -25,17 +24,13 @@ from pathlib import Path
 from typing import Callable
 
 from ..config import ToolConfig
-from ..models import ParsedEntity, Project
+from ..models import ParsedEntity, Project, sha256_text as _sha
 from ..techmap import detect_ecosystems
 from ..vulns import normalize_severity, parse_purl, vulnerability_data
 from .base import RunContext, Tool, ToolError, register
 
 SUPPORTED = {"java", "node", "python", "ruby", "php", "dotnet"}
 EXPERIMENTAL = {"go", "swift", "dart", "native"}
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 @register

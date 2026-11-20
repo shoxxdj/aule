@@ -40,15 +40,14 @@ def sha256_file(path: Path) -> str:
 
 
 def tool_version(tool: Tool, exe: list[str], env: dict[str, str] | None = None) -> str | None:
-    if tool.version_args is None:
+    cmd = tool.version_command(exe)
+    if cmd is None:
         return None
     try:
-        p = subprocess.run([*exe, *tool.version_args], capture_output=True, text=True, timeout=15,
-                           env={**os.environ, **env} if env else None)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env={**os.environ, **env} if env else None)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    out = (p.stdout or p.stderr).strip()
-    return out.splitlines()[0] if out else None
+    return tool.parse_version((p.stdout or p.stderr).strip(), p.returncode)
 
 
 def _redact(text: str, secrets: list[str]) -> str:
@@ -108,6 +107,8 @@ def execute(tool: Tool, project: Project, mode: str, raw_dir: Path, timeout: int
         status, error = "failed", "rapport absent"
     if status == "failed" and exit_code is not None and (tail := _last_line(stderr)):
         error = f"{error} : {_redact(tail, secrets)}"
+    if status == "failed" and error and (hint := tool.failure_hint(error)):
+        error = f"{error} — {hint}"
     duration = round(time.monotonic() - t0, 2)
 
     sha = sha256_file(report) if report.exists() else None

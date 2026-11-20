@@ -1,20 +1,14 @@
 """Parseur SARIF 2.1 générique (opengrep, CodeQL...) -> entités `sast_finding` normalisées."""
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .models import ParsedEntity
+from .models import ParsedEntity, sha256_text as _sha
 
-SEVERITIES = ("critical", "high", "medium", "low", "info")
 _CWE_RE = re.compile(r"CWE-(\d+)", re.I)
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def severity_from(level: str | None, security_severity: float | None) -> str:

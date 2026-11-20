@@ -13,18 +13,13 @@ Options aule.yaml (tools.trivy.options) :
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
-from ..models import ParsedEntity, Project
+from ..models import ParsedEntity, Project, sha256_text as _sha
 from ..techmap import detect_ecosystems
 from ..vulns import make_purl, normalize_severity, vulnerability_data
 from .base import RunContext, Tool, register
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 @register

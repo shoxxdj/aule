@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections import Counter
 from pathlib import Path
 
-from ..models import ParsedEntity, Project
+from ..models import ParsedEntity, Project, sha256_text as _sha
 from .base import RunContext, Tool, register
 
 _HISTORY_FILE_RE = re.compile(r"^(\d+)-([0-9a-fA-F]{6,40})/(.+)$")
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def mask(secret: str) -> str:
@@ -54,8 +49,18 @@ class Gitleaks(Tool):
     def phase(self, mode: str) -> int:
         return 1 if mode == "history" else 0
 
+    def _gittools_report(self, project: Project, ctx: RunContext) -> dict:
+        try:
+            return json.loads((ctx.raw_dir(project.name, "gittools", "extract") / "report.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
     def _extracted_dir(self, project: Project, ctx: RunContext) -> Path:
-        return ctx.raw_dir(project.name, "gittools", "extract") / "extracted"
+        """Dossier à scanner pour le mode history : le `scan_root` du rapport de gittools (extracted/snapshots avec git-extractor-rs, où `blobs/`,
+        `commits/`... ne doivent PAS être scannés), sinon `extracted/` (extractor.sh, anciens rapports)."""
+        raw = ctx.raw_dir(project.name, "gittools", "extract")
+        root = (raw / (self._gittools_report(project, ctx).get("scan_root") or "extracted")).resolve()
+        return root if root.is_relative_to(raw.resolve()) else raw / "extracted"
 
     def applicable(self, project: Project, mode: str, ctx: RunContext) -> bool:
         if mode == "git":
@@ -123,12 +128,18 @@ class Gitleaks(Tool):
         (règle, fichier, secret) et on garde les commits concernés."""
         extracted = self._extracted_dir(project, ctx)
         commit_meta = self._commit_meta(project, ctx)
+        by_dir = {c["dir"]: c for c in self._gittools_report(project, ctx).get("commits", []) if c.get("dir")}  # dossier d'instantané -> commit
         groups: dict[str, dict] = {}
         for index, f in enumerate(findings):
             secret = f.get("Secret") or ""
             rel = _relative(extracted, f.get("File", ""))
-            m = _HISTORY_FILE_RE.match(rel)
-            commit_idx, commit, file = (int(m[1]), m[2], m[3]) if m else (None, None, rel)
+            first, _, rest = rel.partition("/")
+            if first in by_dir and rest:
+                commit_idx, commit, file = by_dir[first].get("index", 0), by_dir[first]["hash"], rest
+            elif m := _HISTORY_FILE_RE.match(rel):  # repli : rapport sans correspondance de dossiers
+                commit_idx, commit, file = int(m[1]), m[2], m[3]
+            else:
+                commit_idx, commit, file = None, None, rel
             key = _sha("|".join([project.name, "history", f.get("RuleID", ""), file, _sha(secret)]))[:24]
             g = groups.setdefault(key, {"first": f, "secret": secret, "index": index, "file": file, "commits": {}})
             if commit:
@@ -142,20 +153,18 @@ class Gitleaks(Tool):
             ordered = sorted(g["commits"].items(), key=sort_key)
             first = ordered[0][0] if ordered else None
             last = ordered[-1][0] if ordered else None
+            flags = [commit_meta.get(h, {}).get("reachable") for h, _ in ordered]
+            unreachable_only = bool(flags) and all(f is False for f in flags)  # que des commits sur lesquels aucune référence ne mène
             meta = commit_meta.get(first, {}) if first else {}
             entities.append(ParsedEntity("secret", key, {
                 **self._common(g["first"], g["secret"], g["index"]),
                 "mode": "history", "file": g["file"],
                 "commit": first, "first_commit": first, "last_commit": last,
-                "commits": [h for h, _ in ordered], "commits_count": len(ordered),
+                "commits": [h for h, _ in ordered], "commits_count": len(ordered), "unreachable_only": unreachable_only,
                 "author": meta.get("author"), "email": meta.get("author_email"),
                 "date": meta.get("date"), "commit_message": (meta.get("message") or "")[:200] or None,
             }))
         return entities
 
     def _commit_meta(self, project: Project, ctx: RunContext) -> dict[str, dict]:
-        report = ctx.raw_dir(project.name, "gittools", "extract") / "report.json"
-        try:
-            return {c["hash"]: c for c in json.loads(report.read_text(encoding="utf-8"))["commits"]}
-        except (OSError, ValueError, KeyError):
-            return {}
+        return {c["hash"]: c for c in self._gittools_report(project, ctx).get("commits", []) if "hash" in c}

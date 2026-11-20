@@ -22,10 +22,13 @@ unpack:
 #   Les valeurs de secrets ne sont jamais envoyées (indices calculés localement à la place).
 #   Avis CONSULTATIFS : le modèle peut se tromper ; il ne modifie jamais le triage (aule critiq apply : étape explicite).
 #   `aule critiq run --dry-run --show 3` affiche le texte EXACT qui serait envoyé, sans rien envoyer.
+# Le MOTEUR d'IA (adresse, modèle, clé d'API, TLS…) n'est PAS ici : il est dans un fichier à part, llm.yaml, secrets compris (voir llm.example.yaml).
+# Ce fichier-ci ne contient donc aucun secret et peut être versionné.
+# llm_file: llm.yaml                  # défaut : llm.yaml à côté de ce fichier ; pour le ranger hors du dépôt : ~/.config/aule/llm.yaml
+
+# Comportement de la critique IA (aule critiq run, ou aule run --critiq)
 critiq:
   enabled: false
-  # base_url: http://127.0.0.1:11434
-  # model: qwen2.5-coder:7b          # PAS de défaut : choisissez parmi vos modèles (`ollama list`)
   # kinds: [secret, sast]            # + vuln pour les dépendances (l'IA peut chercher l'usage du composant dans le code)
   # min_severity: low
   # max_findings: 200                # au plus N constats par passage (les plus graves d'abord)
@@ -33,11 +36,12 @@ critiq:
   # context_lines: 15                # lignes de code autour du constat
   # max_rounds: 3                    # tours où le modèle peut demander du code complémentaire
   # max_request_lines: 120
+  # --- La case « le modèle peut demander BEAUCOUP plus de code » (donné automatiquement). Secrets masqués, deny_globs et confinement au projet restent en vigueur ---
+  # allow_more_code: false              # true, ou : aule critiq run --more-code ; case à cocher dans l'interface
+  # extended_rounds: 8                  # tours de demandes en mode étendu
+  # extended_request_lines: 600         # lignes par plage en mode étendu (jamais moins que max_request_lines)
+  # extended_budget_chars: 150000       # code supplémentaire par constat ; avec Ollama, borné par num_ctx (à augmenter dans llm.yaml : 32768)
   # max_prompt_chars: 18000
-  # num_ctx: 8192                    # fenêtre de contexte demandée à Ollama (sinon il tronque en silence à 2048)
-  # timeout: 300
-  # temperature: 0.0
-  # allow_remote: false              # true : accepte un endpoint non local (le code client quitte alors la machine)
   # send_secret_values: false        # ⚠ true : envoie les secrets en clair au modèle
   # deny_globs: ["**/.env", "**/*.pem", "**/*.key", ".git/**"]   # fichiers jamais envoyés, même si le modèle les demande
 
@@ -119,13 +123,24 @@ tools:
       # analyze_args: []                     # extra_args vaut pour `database create`
       # keep_database: false                 # true : conserve la base (grosse) dans data/work/<run>/codeql/
 
-  # GitTools « Extractor » : reconstruit chaque commit d'un .git (même incomplet).
-  # Désactivé par défaut. Active : enabled: true ici, ou --history, ou --tools ...,gittools
-  # Alimente l'onglet « Historique » et le mode gitleaks `history`.
-  # ⚠ un arbre complet est écrit par commit : prévoir de l'espace disque.
+  # Reconstruction de l'historique : un instantané complet par commit et TOUS les objets
+  # (y compris inaccessibles : branche supprimée, historique réécrit). Désactivé par défaut. Active : enabled: true ici,
+  # ou --history, ou --with gittools (alias acceptés : gitdump, git-extractor-rs). Alimente l'onglet « Historique »
+  # et le mode gitleaks `history`.
+  # ⚠ un arbre complet est écrit par commit : prévoir de l'espace disque (aule purge --heavy pour le récupérer).
+  # ⚠ git-extractor-rs s'arrête au premier commit dont l'arbre manque : pour un .git INCOMPLET (récupéré d'un serveur), pointez `path:` vers extractor.sh.
+  #
+  # Exécutable par DÉFAUT : `git-extractor-rs`, ou `git-extractor` (cherchés tous deux ; https://github.com/shoxxdj/git-tools-rs, réécriture en Rust de l'Extractor de
+  # GitTools), à installer au préalable ; `git` doit être dans le PATH. Cherché dans le PATH, sinon donnez `path:`.
   gittools:
     enabled: false
-    path: ~/tools/GitTools/Extractor/extractor.sh
+    # path: ~/.cargo/bin/git-extractor-rs
+    options:
+      # threads: 4                         # git-extractor-rs : workers `git cat-file --batch` parallèles (1 à 64)
+      # snapshot_date: committer           # date qui préfixe les instantanés : committer (défaut) ou author
+      # flavor: auto                       # auto = d'après l'exécutable ; rust ou sh pour forcer
+    # Variante historique : extractor.sh de GitTools (internetwache). Reconnu à son extension .sh :
+    # path: ~/tools/GitTools/Extractor/extractor.sh
     # launcher: [bash]                     # déduit automatiquement pour un .sh non exécutable
 
   # ---- Outils optionnels supplémentaires (désactivés par défaut ; activer ici ou avec --with) -----------------------

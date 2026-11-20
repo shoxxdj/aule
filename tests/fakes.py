@@ -89,7 +89,9 @@ sys.exit(1 if findings else 0)  # gitleaks renvoie 1 quand il trouve des fuites
 
 # Imite GitTools Extractor : <dest>/<n>-<hash>/ (arbre complet) + commit-meta.txt (git cat-file -p)
 EXTRACTOR = r'''#!/usr/bin/env python3
-import os, subprocess, sys
+import json, os, subprocess, sys
+if os.environ.get("FAKE_ARGV"):
+    open(os.environ["FAKE_ARGV"], "a").write(json.dumps(sys.argv[1:]) + "\n")  # journalisé dès l'entrée, même si l'appel est invalide
 repo, dest = sys.argv[1:3]
 if os.environ.get("FAKE_LOG"):
     open(os.environ["FAKE_LOG"], "a").write("extractor\n")
@@ -102,6 +104,99 @@ for i, h in enumerate(hashes):
     subprocess.run(f"git -C '{repo}' archive {h} | tar -x -C '{d}'", shell=True, check=True)
     with open(os.path.join(d, "commit-meta.txt"), "w") as fh:
         fh.write(subprocess.run(["git", "-C", repo, "cat-file", "-p", h], capture_output=True, text=True).stdout)
+'''
+
+
+# Imite git-extractor-rs (shoxxdj/git-tools-rs), d'après son CODE SOURCE (src/main.rs) : arguments clap (le dépôt ; la sortie en positionnel OU -o, jamais les deux),
+# TOUS les objets (même inaccessibles) dans blobs/ commits/ trees/ tags/ (charges utiles brutes), metadata/objects.json [{hash, object_type, size, path}],
+# un instantané par commit snapshots/<AAAAMMJJ-HHMM>_<hash>/ (fichiers réguliers seulement), metadata/snapshots.json
+# [{commit, directory, date, timestamp, tz_offset, files}] et report.json {repository, total_objects, counts, includes_unreachable_objects}.
+# Comportements repris du code : dépôt sans objet -> « No Git objects found. » code 0 et RIEN d'écrit ; le premier `git archive` en échec arrête TOUT
+# (objets et objects.json déjà écrits, ni snapshots.json ni report.json) avec « Error: git archive failed for <hash>: … » code 1.
+GIT_EXTRACTOR_RS = r'''#!/usr/bin/env python3
+import io, json, os, re, subprocess, sys, tarfile
+from datetime import datetime, timedelta, timezone
+args = sys.argv[1:]
+if os.environ.get("FAKE_ARGV"):
+    open(os.environ["FAKE_ARGV"], "a").write(json.dumps(args) + "\n")
+if args[:1] == ["--version"]:
+    if os.environ.get("FAKE_EXTRACTOR_NO_VERSION"):      # une autre version de l'outil pourrait ne pas l'avoir
+        sys.stderr.write("error: unexpected argument '--version' found\n"); sys.exit(2)
+    print("git-extractor-rs 0.1.0"); sys.exit(0)
+out, threads, date, report, positional = None, 4, "committer", True, []
+i = 0
+while i < len(args):
+    a = args[i]
+    if a in ("-o", "--output"):
+        out = args[i + 1]; i += 2
+    elif a in ("-j", "--threads"):
+        threads = int(args[i + 1]); i += 2
+    elif a == "--snapshot-date":
+        date = args[i + 1]; i += 2
+        if date not in ("committer", "author"):
+            sys.stderr.write("error: invalid value '%s' for '--snapshot-date <SNAPSHOT_DATE>'\n" % date); sys.exit(2)
+    elif a == "--report":
+        report = args[i + 1] == "true"; i += 2
+    else:
+        positional.append(a); i += 1
+repo = positional[0]
+if len(positional) > 1:
+    if out is not None:
+        sys.stderr.write("error: the argument '[OUTPUT]' cannot be used with '--output <DIR>'\n"); sys.exit(2)
+    out = positional[1]
+out = out or "./xtracted"
+if os.environ.get("FAKE_LOG"):
+    open(os.environ["FAKE_LOG"], "a").write("extractor\n")
+if os.environ.get("FAKE_EXTRACTOR_FAIL"):
+    sys.stderr.write("extractor: broken repository\n"); sys.exit(1)
+if threads == 0:
+    sys.stderr.write("Error: --threads must be greater than zero\n"); sys.exit(1)
+git = lambda *a, **k: subprocess.run(["git", "-C", repo, *a], capture_output=True, **k)
+chk = git("rev-parse", "--git-dir", text=True)
+if chk.returncode != 0:
+    sys.stderr.write("Error: not a Git repository: " + chk.stderr.strip() + "\n"); sys.exit(1)
+os.makedirs(out, exist_ok=True)
+hashes = sorted(set(l.strip() for l in git("cat-file", "--batch-all-objects", "--batch-check=%(objectname)", text=True).stdout.splitlines() if l.strip()))
+if not hashes:
+    print("No Git objects found."); sys.exit(0)
+folder = {"blob": "blobs", "commit": "commits", "tree": "trees", "tag": "tags"}
+objects = []
+for h in hashes:
+    kind = git("cat-file", "-t", h, text=True).stdout.strip()
+    payload = git("cat-file", kind, h).stdout
+    os.makedirs(os.path.join(out, folder[kind]), exist_ok=True)
+    path = os.path.join(out, folder[kind], h)
+    open(path, "wb").write(payload)
+    objects.append({"hash": h, "object_type": kind, "size": len(payload), "path": os.path.abspath(path)})
+os.makedirs(os.path.join(out, "metadata"), exist_ok=True)
+json.dump(objects, open(os.path.join(out, "metadata", "objects.json"), "w"), indent=2)
+snaps = []
+for o in (o for o in objects if o["object_type"] == "commit"):
+    if os.environ.get("FAKE_EXTRACTOR_ARCHIVE_FAIL"):
+        sys.stderr.write("Error: git archive failed for %s: fatal: unable to read tree (0000000000000000000000000000000000000000)\n" % o["hash"]); sys.exit(1)
+    raw = open(o["path"], "rb").read().decode("utf-8", "replace")
+    m = re.search(r"^" + date + r" .*> (\d+) ([+-])(\d{2})(\d{2})$", raw.partition("\n\n")[0], re.M)
+    stamp = None
+    if m:
+        off = timedelta(hours=int(m[3]), minutes=int(m[4])) * (-1 if m[2] == "-" else 1)
+        stamp = datetime.fromtimestamp(int(m[1]), tz=timezone(off)).strftime("%Y%m%d-%H%M")
+    name = f"{stamp or '00000000-0000'}_{o['hash']}"
+    d = os.path.join(out, "snapshots", name)
+    os.makedirs(d, exist_ok=True)
+    count = 0
+    with tarfile.open(fileobj=io.BytesIO(git("archive", "--format=tar", o["hash"]).stdout)) as t:
+        for member in t.getmembers():
+            if member.isreg():
+                t.extract(member, d); count += 1
+    snaps.append({"commit": o["hash"], "directory": name, "date": stamp, "timestamp": int(m[1]) if m else None,
+                  "tz_offset": (m[2] + m[3] + m[4]) if m else None, "files": count})
+snaps.sort(key=lambda s: s["directory"])
+json.dump(snaps, open(os.path.join(out, "metadata", "snapshots.json"), "w"), indent=2)
+if report:
+    counts = {}
+    for o in objects:
+        counts[o["object_type"]] = counts.get(o["object_type"], 0) + 1
+    json.dump({"repository": repo, "total_objects": len(objects), "counts": counts, "includes_unreachable_objects": True}, open(os.path.join(out, "report.json"), "w"), indent=2)
 '''
 
 
@@ -394,12 +489,12 @@ sys.exit(1 if failed else 0)
 
 
 def install(bin_dir: Path, *, cloc: str | None = "cloc", gitleaks: str | None = "gitleaks",
-            extractor: str | None = "extractor.sh", opengrep: str | None = "opengrep",
+            extractor: str | None = "git-extractor-rs", legacy_extractor: str | None = None, opengrep: str | None = "opengrep",
             depcheck: str | None = "dependency-check.sh", codeql: str | None = "codeql",
             trufflehog: str | None = "trufflehog", osv: str | None = "osv-scanner", trivy: str | None = "trivy",
             checkov: str | None = "checkov") -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for name, body in ((cloc, CLOC), (gitleaks, GITLEAKS), (extractor, EXTRACTOR), (opengrep, OPENGREP), (depcheck, DEPCHECK), (codeql, CODEQL),
+    for name, body in ((cloc, CLOC), (gitleaks, GITLEAKS), (extractor, GIT_EXTRACTOR_RS), (legacy_extractor, EXTRACTOR), (opengrep, OPENGREP), (depcheck, DEPCHECK), (codeql, CODEQL),
                        (trufflehog, TRUFFLEHOG), (osv, OSV), (trivy, TRIVY), (checkov, CHECKOV)):
         if name:
             p = bin_dir / name

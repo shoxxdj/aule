@@ -76,7 +76,7 @@ Largeurs calculées **en cellules de terminal** (un emoji en occupe deux) ; en t
 | `gitleaks` | secrets : fichiers (`dir`), historique (`git`), commits reconstruits (`history`) | par défaut |
 | `links` | liens entre projets (dépendances, secrets/hôtes partagés, dépôt d'origine) | par défaut |
 | `trufflehog` | second avis sur les secrets (vérification **désactivée** par défaut) | option |
-| `gittools` (Extractor) | reconstruit les commits d'un `.git`, même incomplet | option |
+| `gittools` (alias `gitdump`) | reconstruit les commits d'un `.git`, **y compris les objets inaccessibles** : [`git-extractor-rs`](https://github.com/shoxxdj/git-tools-rs) (défaut ; trouvé aussi sous le nom `git-extractor`) ; pour un `.git` *incomplet*, l'`extractor.sh` de GitTools | option |
 | `opengrep` + [règles](https://github.com/opengrep/opengrep-rules) | SAST, règles choisies **selon les technologies** | option |
 | `codeql` | SAST sémantique, chemins de données source → puits, un mode par langage | option |
 | `checkov` | mauvaises configurations IaC (Terraform, Kubernetes, Dockerfile…) | option |
@@ -172,7 +172,12 @@ Serveur **local** (bibliothèque standard, aucune dépendance) : la même page q
   *Par fichier* (fichiers touchés, avec compteurs), *Notifications* (erreurs et avertissements d'exécution : fichiers non extraits… à lire avant de conclure à l'absence de résultat) et *JSON brut*.
   Autres fichiers : **explorateur JSON** en arbre dépliable ou en tableau filtrable, journaux paginés. Depuis un constat : bouton
   « Voir la sortie brute complète ». Désactivé avec `--mask` (les sorties brutes contiennent les secrets en clair) ; limite 150 Mo par document.
-- **Liens** : graphe des projets liés (dépendance, secret partagé, même dépôt d'origine, hôte commun) ; clic pour filtrer.
+- **Liens** : graphe de propriétés interactif, dans l'esprit du navigateur Neo4j. Les projets sont reliés par ce qu'ils partagent, et chaque élément partagé est un **nœud** : le secret
+  (règle + valeur masquée), l'hôte, le dépôt d'origine ; les dépendances et extractions d'archive sont des relations fléchées. **Glisser** un nœud le déplace (il reste épinglé, pointillés ; double-clic pour
+  le libérer) et ses voisins suivent (physique, désactivable) ; fond = déplacer la vue, molette = zoom, double-clic sur le fond ou « Ajuster » = tout voir. Un clic sélectionne : l'**inspecteur**
+  (à droite) donne ses propriétés, ses constats (secrets, SAST, dépendances) et ses relations, cliquables pour naviguer, avec des raccourcis vers ses onglets ; le reste du graphe recule, et
+  « Isoler » ne garde que les voisins (1 ou 2 niveaux). La **légende** filtre par type de nœud et de relation ; la recherche trouve un nœud (nom, règle, hôte…). Au-delà de 400 nœuds, seuls les plus connectés
+  sont dessinés (filtrez pour voir le reste). « Exporter SVG » télécharge le graphe affiché (fichier autonome). En terminal, `aule links` affiche une arborescence par projet.
 - **Comparaison** de deux runs (nouveaux, corrigés, persistants) ; **Audit** : lancer un audit et suivre sa progression en direct ;
   sélecteur de run ; fichiers bruts consultables.
 
@@ -256,18 +261,128 @@ après analyse. **dependency-check / osv-scanner / trivy** : écosystème détec
 
 ## Critique par un modèle d'IA (`--critiq`)
 
-Une fois tous les outils passés, un modèle (Ollama pour commencer) donne un **avis consultatif** sur chaque constat : *vrai positif*,
+Une fois tous les outils passés, un modèle (Ollama, ou un agent LibreChat) donne un **avis consultatif** sur chaque constat : *vrai positif*,
 *faux positif* ou *incertain*, avec une justification et un niveau de confiance. Il peut **demander du code complémentaire** (une plage
 de fichier, ou une recherche littérale), jusqu'à `max_rounds` tours. Un même constat vu par plusieurs outils n'est jugé qu'une fois.
 
+**Demander beaucoup plus de code : la case `allow_more_code`.** Par défaut le mode est *standard* : 3 tours, 4 demandes par tour, 120 lignes par plage, 20 résultats par recherche. En cochant
+`critiq.allow_more_code: true` (ou `aule critiq run --more-code`, `aule run --critiq --more-code`, ou la case « autoriser le modèle à demander plus de code » de la carte *Critique IA* de l'interface),
+le modèle passe en mode **étendu** et **tout ce qu'il demande lui est donné automatiquement**, sans confirmation :
+
+| | standard | étendu (réglable) |
+|---|---|---|
+| tours de demandes | `max_rounds` (3) | `extended_rounds` (8) |
+| lignes par plage (un fichier moyen tient en une demande) | `max_request_lines` (120) | `extended_request_lines` (600) |
+| résultats d'une recherche | 20 | 60 |
+| **liste d'un dossier** `{"list": "<dossier>"}` (nouveau : pour découvrir les fichiers qu'il ne connaît pas) | refusée | oui, 300 entrées au plus |
+| code supplémentaire par constat | non borné autrement que par ce qui précède | `extended_budget_chars` (150 000 caractères) |
+
+Le modèle est **informé** des tours et du budget qui lui restent. Un avis obtenu en mode étendu sert aussi aux relectures en mode standard (il contient plus d'information) ; l'inverse non :
+cocher la case refait les avis, car un « incertain » faute de contexte n'a plus de raison de rester tel.
+
+**Cocher la case, c'est consentir à envoyer plus de *code*, pas à baisser la garde sur les secrets.** Restent en vigueur, quel que soit le mode : les valeurs de secret masquées (`<SECRET>`), les
+fichiers exclus par `deny_globs` (`.env`, clés… : leur existence n'est même pas révélée par la liste d'un dossier), `.git`, les liens symboliques, le confinement au projet, le traitement du code comme
+donnée non fiable (noms de fichiers compris), et le fait que les avis restent consultatifs. Si vous voulez qu'un fichier précis soit lisible, c'est à vous de le sortir de `deny_globs`. Un `⚠ allow_more_code`
+rappelle dans le journal que plus de code part vers le moteur ; chaque extrait servi est tracé (`aule critiq show`), et la conversation est marquée `extended`.
+
+**Avec Ollama**, le budget est borné par le contexte du modèle (`num_ctx`, environ 3 caractères par jeton) : au-delà, Ollama tronque *en silence le début* du prompt, c'est-à-dire les consignes. Pour exploiter
+vraiment le mode étendu, augmentez `num_ctx` (par exemple 32768) ; avec un moteur distant (`custom`, LibreChat), seul `extended_budget_chars` joue. Pour supprimer toute demande de code, mettez `max_rounds: 1`.
+
 ```bash
-ollama pull qwen2.5-coder:7b                                  # ou tout autre modèle installé : critiq.model dans aule.yaml
+ollama pull qwen2.5-coder:7b                                  # ou tout autre modèle installé : `model` dans llm.yaml
 aule critiq run --dry-run --show 3                           # montre le texte EXACT qui serait envoyé ; n'envoie rien
 aule run DOSSIER --critiq                                    # critique en phase 5 (n'affecte jamais le statut de l'audit)
 aule critiq run [--kind secret,sast,vuln] [--force]          # après coup, ou pour refaire / étendre
 aule critiq list --verdict false_positive ; aule critiq show 3a9f01bc
 aule critiq apply --min-confidence 0.8 [--yes]               # reporte les avis dans le triage (aperçu sans --yes)
 ```
+
+### Le moteur d'IA : `llm.yaml`
+
+Le moteur (adresse, modèle, clé d'API, TLS…) est dans **un fichier à part, `llm.yaml`**, à côté de `aule.yaml` (ou ailleurs : `llm_file: ~/.config/aule/llm.yaml` dans `aule.yaml`). C'est voulu :
+
+- `aule.yaml` (le comportement : outils, `critiq.kinds`, `allow_more_code`…) **ne contient plus aucun secret** : il peut être versionné et partagé. `llm.yaml` porte la clé d'API : `chmod 600`, **ne le versionnez pas** (le dépôt l'ignore) ; Aulë avertit s'il est lisible par d'autres utilisateurs.
+- **Aucun secret n'est lu dans une variable d'environnement** : la clé est dans `llm.yaml`, et nulle part ailleurs (ni variable, ni fichier annexe).
+- **Une seule clé par idée** : `url` (l'adresse, pour les trois moteurs), `api_key`, `proxy` (`env` ou une URL). Une clé qui n'a pas de sens pour le moteur choisi est **refusée avec un message**, jamais ignorée en silence. `llm.example.yaml` les documente toutes, moteur par moteur.
+
+```yaml
+# llm.yaml
+provider: custom                 # ollama | librechat | custom
+url: https://llm.exemple.fr/v1/chat/completions
+model: triton
+api_key: "votre-cle-d-api"
+allow_remote: true               # le code audité part vers ce serveur : consentement explicite
+```
+
+**Vous aviez les réglages du moteur dans la section `critiq` de `aule.yaml` ?** Cet ancien format est désormais **refusé** (la seule manière de garantir qu'il n'y ait pas deux endroits qui se contredisent), avec un message qui nomme chaque clé à déplacer.
+`aule llm migrate` crée `llm.yaml` (droits 600) à partir de l'ancienne section : `base_url` devient `url`, `use_env_proxy` devient `proxy: env`, et une clé qui venait d'une **variable d'environnement ou d'un fichier annexe est inscrite dans `llm.yaml`**
+(la commande vous le dit ; retirez ensuite la variable de votre environnement). Il ne modifie pas `aule.yaml` (le réécrire détruirait vos commentaires) : supprimez simplement les clés listées de sa section `critiq`.
+
+Sans `llm.yaml`, `aule critiq run --dry-run` fonctionne (rien n'est envoyé) ; les autres commandes disent quoi faire. `aule critiq check [--probe]` vérifie le moteur sans envoyer de code.
+
+### Via LibreChat (API Agents)
+
+Un **agent LibreChat** peut jouer le rôle du modèle (utile si votre organisation expose ses modèles par LibreChat plutôt que par Ollama). On passe par l'API
+Agents de LibreChat (bêta, compatible OpenAI) avec une **clé d'API** ; `model` désigne alors l'**identifiant de l'agent**, pas un nom de modèle.
+
+1. **Côté LibreChat** : Paramètres → Données et confidentialité → *Clés d'API d'agents* → Créer (copiez-la tout de suite : elle n'est montrée qu'une fois).
+   Si la section n'apparaît pas, votre rôle n'a pas la permission *Remote Agents*. L'identifiant de l'agent est dans *Paramètres avancés* du constructeur ;
+   si l'agent n'est pas le vôtre, son propriétaire doit vous donner l'accès avec le bouton *Remote Access* (le globe).
+2. **Côté Aulë** : dans `llm.yaml` (voir `llm.example.yaml`) : `provider: librechat`, `url: https://chat.exemple.fr` (`/api/agents/v1` est ajouté tout seul), `model: agent_…`, `api_key`, `allow_remote: true`.
+3. **Vérifier sans rien envoyer** : `aule critiq check` (connexion, clé acceptée, agent visible ; en cas d'erreur, le diagnostic dit quoi corriger : 401 clé refusée,
+   403 permission ou *Remote Access*, 404 API absente ou agent invisible, certificat inconnu → `ca_file`…).
+4. Ensuite comme avec Ollama : `aule critiq run --dry-run --show 3` (ne demande **même pas** de clé), `aule critiq run --max 3`, `aule run … --critiq`.
+
+**Un agent dédié, sans aucun outil.** Un agent LibreChat embarque « sa configuration complète (instructions, outils, fichiers) ». Du code audité peut contenir des
+instructions pour manipuler le modèle : si l'agent disposait d'une recherche web ou d'une exécution de code, cela deviendrait une porte de sortie. Créez un agent
+**sans outil ni fichier**, température basse, avec par exemple pour instructions : *« Tu es relecteur de sécurité. Tu réponds uniquement par le JSON demandé. »*
+Aulë **refuse toute réponse où l'agent tente d'appeler un outil**, mais la bonne protection reste de ne lui en donner aucun.
+
+**Ce que la clé implique.** Une clé *agit comme vous* : traitez-la comme un mot de passe (`chmod 600`, jamais versionnée). Aulë ne l'affiche ni ne la journalise jamais (les erreurs en sont expurgées, même si le serveur la recopie),
+ne la renvoie **jamais sur une redirection** vers une autre adresse, et **vérifie toujours le certificat TLS avec LibreChat** (aucune option pour le désactiver ; autorité privée : `ca_file`). Un serveur distant exige `allow_remote: true` et `https://`
+(`http://` vers un hôte distant est refusé : clé et code circuleraient en clair). Les proxys d'environnement sont ignorés sauf `proxy: env`.
+
+**À savoir.** Les appels **consomment le solde de jetons du compte** LibreChat (le total est affiché en fin de critique) ; l'API est **en bêta** (formats susceptibles de changer) ;
+vérifiez la **rétention des conversations** côté LibreChat, puisque des extraits de code y transitent. `temperature` et `num_ctx` n'existent pas pour ce moteur (refusés dans `llm.yaml`) : ils se règlent dans l'agent.
+Aulë ne demande jamais de `response_format` (l'agent gère son modèle) : le format JSON est exigé dans le message, validé strictement, avec une relance en cas d'erreur.
+L'interface `responses` (Open Responses) est implémentée d'après la spécification publiée ; `chat_completions` (défaut) est la plus éprouvée.
+
+### Via un point d'accès HTTP personnalisé (`provider: custom`)
+
+Pour une passerelle interne ou tout service **compatible Chat Completions** (Triton, vLLM, LiteLLM…) : l'URL, la clé et leurs réglages sont **dans `llm.yaml`**. Votre essai
+`requests.post(URL, headers={"x-ai-api-key": …}, json={"model": "triton", …}, verify=False)` s'écrit :
+
+```yaml
+# llm.yaml
+provider: custom
+url: https://domain.com/v1/chat/completions
+allow_remote: true                 # le code audité part vers ce serveur : consentement explicite
+model: triton
+api_key: "votre-cle-d-api"         # dans ce fichier ; chmod 600
+api_key_header: x-ai-api-key       # sans cela : Authorization: Bearer <clé>
+max_tokens: 2048
+verify_tls: false                  # = verify=False / curl --insecure
+```
+
+`aule critiq check` valide la configuration sans rien envoyer ; **`aule critiq check --probe`** rejoue votre essai (« Say hello in one short sentence. », aucun code) et affiche la réponse. Réglages (tous facultatifs sauf `url`) :
+
+| Clé | Rôle |
+|---|---|
+| `api_key`, `api_key_header`, `api_key_prefix` | la clé, l'en-tête qui la porte (défaut `Authorization` + `Bearer `), un texte devant la clé |
+| `headers` | en-têtes supplémentaires (valeurs expurgées des erreurs) |
+| `max_tokens`, `body` | `max_tokens` (défaut 2048, `null` = non envoyé) et champs libres ajoutés au JSON (`temperature`, `top_p`, `stop`…) ; `body` l'emporte, `model` et `messages` sont réservés |
+| `json_mode`, `fold_system` | comment demander du JSON : consigne dans le message (`prompt`, défaut), `json_object` ou `json_schema` (champ `response_format`) ; message système replié ou non |
+| `response_path` | où lire le texte dans la réponse JSON : `choices.0.message.content` par défaut (la réponse OpenAI standard, `tool_calls: null` accepté), `output.text`, `data.0.parts`… ; une erreur liste les clés présentes |
+| `check_url` | GET de vérification (ex. `…/v1/models`) : vérifie aussi que le modèle existe |
+| `verify_tls`, `ca_file`, `client_cert`, `client_key` | TLS : vérification (défaut) ou non, autorité privée, TLS mutuel |
+| `proxy`, `retries`, `timeout`, `insecure_http` | transport (`proxy` : `env` ou une URL ; jamais de proxy par défaut) |
+
+**Ce qu'il faut savoir :**
+- **La clé est dans `llm.yaml`**, jamais dans l'environnement : `chmod 600`, ne le versionnez pas (Aulë avertit si le fichier est lisible par d'autres).
+- **`verify_tls: false` coupe l'authentification du serveur** : un intermédiaire peut lire la clé et le code audité. Aulë l'écrit à chaque usage ; préférez `ca_file` si l'autorité est privée. Ce contournement n'existe que pour `custom`, dans un module à part : LibreChat reste toujours vérifié.
+- **Défaut `max_tokens: 2048`** : certains serveurs plafonnent à 16 jetons sans cette valeur, ce qui tronque la réponse JSON de la critique.
+- **Modèles à raisonnement** (`reasoning_content`, `reasoning_tokens` dans `usage`) : le raisonnement est ignoré (jamais lu ni conservé) mais **consomme `max_tokens`**. S'il l'épuise avant de répondre, `content` arrive vide : Aulë le diagnostique (`finish_reason: length`, avec le nombre de jetons de raisonnement) et vous demande d'augmenter `max_tokens` dans `llm.yaml` (essayez 4096 ou 8192).
+- Restent en vigueur : clé jamais affichée ni journalisée (expurgée des erreurs, adresse affichée sans identifiants ni paramètres de requête), **aucune redirection suivie** (la clé ne part jamais ailleurs), réponse d'outil refusée, `https://` exigé hors machine locale.
 
 **Confidentialité** : endpoint **local** par défaut (un endpoint distant exige `allow_remote: true`) ; les proxys d'environnement sont
 ignorés ; les **valeurs de secrets ne sont jamais envoyées** (`<SECRET>` + indices calculés localement : longueur, entropie, mots de type
@@ -290,15 +405,43 @@ votre matériel (un appel par constat, séquentiel).
 ## Archives et historique git
 
 `--unpack` décompresse zip/tar.* (zip-slip refusé, liens symboliques ignorés, taille bornée) : chaque archive devient un projet
-`projet@archive.zip` analysé comme les autres. `--history` reconstruit chaque commit des `.git` (GitTools) puis les scanne.
-GitTools écrit un arbre complet par commit : voir `aule purge --heavy`.
+`projet@archive.zip` analysé comme les autres. `--history` reconstruit chaque commit des `.git` (`git-extractor-rs`) puis les scanne.
+`git-extractor-rs` écrit un arbre complet par commit : voir `aule purge --heavy`.
+
+### Historique : `git-extractor-rs`
+
+L'outil de reconstruction est [`git-extractor-rs`](https://github.com/shoxxdj/git-tools-rs) (réécriture en Rust de l'Extractor de GitTools), **installé au préalable** comme les autres
+(`cargo build --release` ou `cargo install`, puis le binaire dans le PATH ou `tools.gittools.path`) ; `git` doit être dans le PATH. Le binaire est cherché sous les noms `git-extractor-rs` puis `git-extractor`. Nom de plugin : `gittools` (alias acceptés : `gitdump`, `git-extractor-rs`).
+
+- **Ce qu'il apporte** : il énumère **tous** les objets du dépôt, donc aussi les commits **inaccessibles** (branche supprimée, historique réécrit, `git reset`) : `history` y retrouve des secrets que
+  `gitleaks git` ne voit pas. Un instantané complet est écrit par commit (`snapshots/<AAAAMMJJ-HHMM>_<hash>/`) ; les objets bruts (`blobs/`, `commits/`, `trees/`, `tags/`) sont conservés dans
+  `data/runs/<run>/<projet>/gittools/extract/extracted/` (non listés dans l'explorateur de sorties brutes ; `aule purge --heavy` les supprime).
+- **Ce qui est scanné** : uniquement les instantanés (le rapport du plugin indique à gitleaks où scanner et à quel commit correspond chaque dossier), jamais `blobs/` ni `commits/`.
+- **Ordre des commits** : chronologique en **respectant la filiation**. Le préfixe de date des instantanés n'a qu'une précision à la minute : deux commits d'une même minute ne peuvent pas
+  se départager par leur nom de dossier (qui finit par l'empreinte), alors que leur ordre compte pour « premier » et « dernier commit » d'un secret.
+- **Options** (`tools.gittools.options`) : `threads` (1 à 64, défaut 4), `snapshot_date` (`committer` par défaut, ou `author`), `flavor` (`auto` d'après l'exécutable, `rust` ou `sh`).
+- **Ancienne variante** : `extractor.sh` de GitTools reste utilisable en le désignant (`path: …/extractor.sh`) ; il est reconnu à son extension `.sh`.
+- **Non intégré : `git-dumper`**, l'autre binaire du dépôt, qui *télécharge* un `.git` exposé sur un site web. Aulë audite des dossiers livrés ; un téléchargement depuis un site ne s'y rattache pas.
+  Si vous récupérez un `.git` ainsi, placez le résultat dans un projet du dossier à auditer.
+- **Commits inaccessibles** : chaque commit porte `reachable` (une référence — branche, étiquette, remise, suivi distant — y mène-t-elle encore ?). Un secret qui ne figure **que** dans des commits
+  inaccessibles est marqué **« inaccessible »** (onglet Secrets) avec son explication : invisible dans `git log`, mais récupérable tant que le dépôt n'est pas nettoyé (`git gc`). L'onglet Historique a une
+  colonne « Accès » et un filtre. « Inconnu » (git ne sait pas répondre sur un dépôt endommagé) n'est jamais traité comme « inaccessible ».
+- **Lecture des sorties** : d'après le code de l'outil, `metadata/snapshots.json` (`{commit, directory, date, timestamp, tz_offset, files}`) donne la correspondance commit → dossier et le nombre de fichiers par
+  instantané, avec repli sur les noms de dossiers s'il est absent ou illisible (jamais cru sur parole : nom de dossier et nombre validés). `objects.json` et le `report.json` de l'outil ne sont pas utilisés.
+- La **version** est lue par `--version` (clap) et validée : une autre version de l'outil qui répondrait par une erreur d'usage ne s'afficherait pas comme une version.
+
+**Limites de `git-extractor-rs`, vérifiées dans son code :**
+- **Dépôt incomplet** : il **s'arrête au premier commit** dont l'arbre ou un fichier manque (`git archive` échoue), sans écrire `snapshots.json`. C'est le cas d'un `.git` récupéré d'un serveur. L'exécution est alors
+  marquée en échec, avec la piste : utilisez l'`extractor.sh` de GitTools pour ce projet (`tools.gittools.path`) ; `gitleaks git` et `dir` restent disponibles.
+- **`.gitattributes`** : `git archive` applique `export-ignore` ; un fichier ainsi marqué n'est **pas** dans les instantanés, donc pas scanné par `history`. Ses objets sont dans `blobs/` (non scannés) ; `gitleaks git` couvre l'historique visible.
+- Seuls les fichiers réguliers sont écrits (liens symboliques ignorés). Un dépôt **sans aucun objet** donne « aucun commit extrait » (l'outil sort en code 0 sans rien écrire : ce n'est pas un succès).
 
 ## Exploitation
 
 - **`aule doctor`** : lance chaque outil sur un mini-projet synthétique et vérifie le résultat (PASS / WARN / FAIL / SKIP) avec une
   piste de correction (`--full` pour les bases lourdes, `--keep` pour garder les sorties brutes, `--strict` pour échouer sur WARN).
 - **`aule purge`** : plan par défaut, `--yes` pour appliquer. `--keep N`, `--older-than JOURS`, `--run ID` suppriment des runs entiers ;
-  `--heavy` supprime seulement archives décompressées, bases CodeQL et arbres GitTools (rapports et base conservés). Triage, constats
+  `--heavy` supprime seulement archives décompressées, bases CodeQL et arbres des commits reconstruits (rapports et base conservés). Triage, constats
   et notes ne sont **jamais** supprimés.
 - **`aule seal` / `unseal`** : chiffre `data/` avec **gpg** (AES-256, intégrité vérifiée), phrase secrète via `$AULE_PASSPHRASE`,
   `--passphrase-file` ou saisie. `--remove` supprime `data/` après relecture complète du fichier chiffré ; **l'effacement n'est pas

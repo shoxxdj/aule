@@ -14,13 +14,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .models import SKIP_DIRS
 from .critiq import Redactor, _glob_re
 
 MAX_FILE = 5 * 1024 * 1024
 MAX_WINDOW = 2000
 MAX_LINE = 2000
 MAX_ENTRIES = 3000
-SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", "target", ".gradle", ".idea"}
 LANG = {".py": "python", ".js": "javascript", ".ts": "typescript", ".tsx": "typescript", ".jsx": "javascript", ".java": "java", ".kt": "kotlin", ".go": "go",
         ".rb": "ruby", ".php": "php", ".cs": "csharp", ".c": "c", ".h": "c", ".cpp": "cpp", ".rs": "rust", ".sh": "shell", ".yml": "yaml", ".yaml": "yaml",
         ".json": "json", ".xml": "xml", ".tf": "terraform", ".html": "html", ".css": "css", ".sql": "sql", ".md": "markdown", ".toml": "toml"}

@@ -91,7 +91,7 @@ class FullScenarioTest(LiveUiTest):
         self.assertEqual(steps["noteValue"], note)
 
         # graphe : `app` -> `lib` (dépendance), dessiné avec ses deux nœuds et son arête fléchée
-        self.assertEqual((steps["graph"]["circles"], steps["graph"]["lines"]), (2, 1))
+        self.assertEqual((steps["graph"]["circles"], steps["graph"]["edges"]), (2, 1))
         self.assertIn("dépend de", steps["graph"]["text"])
         self.assertIn("npm:@corp/lib", steps["graph"]["text"])
         # comparaison : le secret de `plain`, corrigé entre les deux runs

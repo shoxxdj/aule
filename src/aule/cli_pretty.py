@@ -11,6 +11,7 @@ import time
 from collections import Counter
 from typing import Any
 
+from .models import SEVERITIES
 from .runs import display_name
 from .ui import Col, Live, Raw, S, Ui, cell_width, clip, human_duration, pad
 
@@ -20,7 +21,7 @@ STATUS = {"ok": ("ok", "ok"), "skipped": ("skip", "ash"), "error": ("fail", "fla
           "parse_error": ("warn", "gold")}
 VERDICT = {"true_positive": ("warn", "gold", "vrai positif"), "false_positive": ("skip", "ash", "faux positif"), "uncertain": ("dot", "iron", "incertain"),
            "error": ("fail", "flame", "erreur"), "erreur": ("fail", "flame", "erreur")}
-SEV_ORDER = ("critical", "high", "medium", "low", "info")
+SEV_ORDER = SEVERITIES
 
 
 def sev_style(sev: str) -> str:
@@ -157,9 +158,13 @@ class RunPrinter:
             self.live.print(f"  {ui.icon('package')} {ui.c(project, 'bold')} {ui.c('archive ' + archive, 'ash')}")
             return True
         if m := self.KV.match(line):
-            icon, title = self.KV_ICON[m.group(1)]
+            key, rest = m.groups()
+            icon, title = self.KV_ICON[key]
+            if key == "Critique IA" and "à examiner par" in rest:  # début de la critique : la phase 5 est ouverte, on la garde (barre de progression)
+                self.live.print(f"  {ui.c(rest, 'iron')}")
+                return True
             self._end_phase()
-            self.live.print(f"{ui.lead(icon, 'ember')}{ui.c(title, 'bold ember')}  {ui.c(m.group(2), 'iron')}")
+            self.live.print(f"{ui.lead(icon, 'ember')}{ui.c(title, 'bold ember')}  {ui.c(rest, 'iron')}")
             return True
         if line.startswith("Interrompu"):
             self.live.print(f"{ui.icon('warn', 'gold bold')} {ui.c(line, 'gold')}")
@@ -298,7 +303,8 @@ def show(ui: Ui, db, run_id: str, project: str | None = None) -> None:
         line("wrench", "Exécutions", f"{ui.icon('ok', 'ok')} {ok} ok", f"{ui.icon('warn', 'gold bold')} {ui.c(str(len(bad)) + ' à examiner', 'gold')}" if bad else "")
         for r in bad:
             name = r["tool"] + "/" + r["mode"]
-            ui.say(f"       {ui.icon('warn', 'gold')} {ui.c(name, 'bold')} {ui.c(clip(str(r['error'] or r['status']).replace(chr(10), ' '), max(10, ui.width - 10 - cell_width(name) - 3)), 'gold')}")
+            problem = str(r["error"] or r["status"]).replace("\n", " ")
+            ui.say(f"       {ui.icon('warn', 'gold')} {ui.c(name, 'bold')} {ui.c(clip(problem, max(10, ui.width - 10 - cell_width(name) - 3)), 'gold')}")
         if project:  # détail par résultat (comme le texte historique avec --project)
             for s in secrets:
                 d = s["data"]
@@ -323,12 +329,16 @@ def tools(ui: Ui, rows: list[dict[str, Any]], source: str | None) -> None:
             where = S("non installé (activez-la avec --with ou dans aule.yaml)", "ash")
         elif not r["found"]:
             state = Raw(f"{ui.icon('fail', 'flame bold')} {ui.c('introuvable', 'flame')}")
-            where = S(f"« {r['wanted']} » → renseignez tools.{r['name']}.path", "flame")
+            where = S(f"« {r['wanted']} »", "flame")
         else:
             state = Raw(f"{ui.icon('ok', 'ok bold')} {ui.c('activé', 'ok')}") if r["enabled"] else Raw(f"{ui.icon('skip', 'ash')} {ui.c('option', 'ash')}")
             where = S(r["path"], "iron")
         table.append([S(r["name"], "bold"), state, S(r["modes"], "ash"), where, S(r["version"] or "", "ash")])
-    ui.lines(ui.table([Col("Outil"), Col("État"), Col("Modes", flex=True, min=10), Col("Chemin", flex=True, min=14), Col("Version", flex=True, min=8)], table))
+    ui.lines(ui.table([Col("Outil"), Col("État"), Col("Modes", flex=True, min=10), Col("Chemin", flex=True, min=24), Col("Version", flex=True, min=8)], table))
+    for r in rows:
+        if not r["found"] and r["enabled"]:  # deux lignes courtes, jamais tronquées : ce qui est cherché, puis quoi faire
+            ui.say(f"  {ui.icon('arrow', 'ash')} {ui.c(r['name'] + ' :', 'bold')} {ui.c('cherché : ' + r['wanted'], 'ash')}")
+            ui.say("    " + ui.c(f"ajoutez-le au PATH ou renseignez tools.{r['name']}.path dans aule.yaml", "ash"))
     ui.say()
 
 
@@ -382,6 +392,45 @@ def triage_list(ui: Ui, rows: list[dict[str, Any]], comments: dict, run_id: str)
     ui.say()
     if rows:
         ui.lines(ui.table([Col("Empreinte"), Col("Triage"), Col("Projet"), Col("Gravité"), Col("Constat", flex=True, min=20), Col("Commentaire", flex=True, min=10)], table))
+
+
+REL_FR = {"depends_on": "dépend de", "shared_secret": "secret partagé", "same_remote": "même dépôt d'origine", "shared_endpoint": "hôte commun", "extracted_from": "extrait de"}
+REL_STYLE = {"depends_on": "info", "shared_secret": "flame", "same_remote": "ok", "shared_endpoint": "ember", "extracted_from": "ash"}
+REL_DIRECTED = {"depends_on", "extracted_from"}
+
+
+def link_detail(r: dict[str, Any]) -> str:
+    d, t = r["data"], r["type"]
+    if t == "depends_on":
+        return "via " + ", ".join(d.get("via", []))
+    if t == "shared_secret":
+        return f"{d.get('count')} secret(s) : " + ", ".join(f"{s['rule']} {s['masked']}" for s in d.get("secrets", [])[:3])
+    if t == "same_remote":
+        return str(d.get("remote") or "")
+    if t == "shared_endpoint":
+        return f"{d.get('count')} hôte(s) : " + ", ".join(d.get("hosts", [])[:3])
+    return f"archive {d.get('archive')}" if t == "extracted_from" else ""
+
+
+def links(ui: Ui, rels: list[dict[str, Any]], names: dict[int, str], run_id: str) -> None:
+    """Les liens, en arborescence par projet : une branche par relation, colorée comme dans le graphe de l'interface web."""
+    ui.heading("link", "Liens", f"{plural(len(rels), 'relation')} dans {run_id}")
+    by_src: dict[str, list[dict[str, Any]]] = {}
+    for r in sorted(rels, key=lambda r: (r["type"], names.get(r["dst_id"], ""))):
+        by_src.setdefault(names.get(r["src_id"], "?"), []).append(r)
+    mid, last = ("├─ ", "└─ ") if ui.unicode else ("|- ", "`- ")
+    for project in sorted(by_src):
+        ui.say()
+        ui.say(f"{ui.lead('mountain', 'ember')}{ui.c(project, 'bold ember')}")
+        for i, r in enumerate(by_src[project]):
+            arrow, branch = ("→" if r["type"] in REL_DIRECTED else "↔"), (mid if i < len(by_src[project]) - 1 else last)
+            label, dst = pad(REL_FR.get(r["type"], r["type"]), 22), names.get(r["dst_id"], "?")
+            head = f"{ui.c(branch, 'ash')}{ui.c(label, REL_STYLE.get(r['type'], 'iron') + ' bold')} {arrow} {ui.c(dst, 'bold')}"
+            room = ui.width - 6 - cell_width(f"{branch}{label} {arrow} {dst}")
+            detail = clip(link_detail(r), room) if room >= 12 else ""  # on tronque (…) plutôt que de perdre le détail
+            ui.say("  " + head + (f"  {ui.c(detail, 'ash')}" if detail else ""))
+    ui.say()
+    ui.hint(clip("graphe interactif : aule serve --open, onglet Liens", ui.width - 6))
 
 
 def correlate_groups(ui: Ui, groups: list[dict[str, Any]], total: int) -> None:

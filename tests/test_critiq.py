@@ -18,6 +18,7 @@ from aule.config import ConfigError, CritiqConfig, DEFAULT_DENY_GLOBS, parse_con
 from aule.critiq import (SCHEMA, CodeAccess, Redactor, apply_critiques, build_initial, build_units, critique_unit, parse_verdict,
                             run_critique, secret_features, select_applicable)
 from aule.llm import LLMError, OllamaProvider, is_local_url, make_provider
+from aule.llmconf import LLMConfig, parse_llm
 from aule.orchestrator import run_audit
 from aule.report import build_report_data
 from common import AuditCase, git
@@ -50,10 +51,11 @@ class CritiqCase(Inject, AuditCase):
         self.run_id = self.run_audit(self.config, tool_names=["cloc", "gitleaks", "opengrep", "codeql"])
         self.ollama = FakeOllama(models=(MODEL, "other:latest"), responder=self.RESPONDER).start()
         self.addCleanup(self.ollama.stop)
-        self.cfg = CritiqConfig(enabled=True, base_url=self.ollama.url, model=MODEL, timeout=20)
+        self.cfg = CritiqConfig(enabled=True)
+        self.llm = LLMConfig(provider="ollama", url=self.ollama.url, model=MODEL, timeout=20)
 
-    def crit(self, cfg=None, **kw) -> dict:
-        return run_critique(self.db, self.data, self.run_id, cfg or self.cfg, log=lambda *_: None, **kw)
+    def crit(self, cfg=None, llm=None, **kw) -> dict:
+        return run_critique(self.db, self.data, self.run_id, cfg or self.cfg, llm=llm or self.llm, log=lambda *_: None, **kw)
 
     def verdict_of(self, rule: str, model: str = MODEL):
         for kind in ("secret", "sast_finding"):
@@ -109,26 +111,29 @@ class ProviderTest(unittest.TestCase):
     def test_only_local_endpoints_unless_explicitly_allowed(self):
         self.assertTrue(all(is_local_url(u) for u in ("http://localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434")))
         self.assertFalse(any(is_local_url(u) for u in ("http://10.1.2.3:11434", "http://192.168.0.5", "http://example.com", "not a url")))
-        remote = CritiqConfig(base_url="http://10.1.2.3:11434", model=MODEL)
+        remote = LLMConfig(url="http://10.1.2.3:11434", model=MODEL)
         with self.assertRaisesRegex(LLMError, "n'est pas un endpoint local.*allow_remote"):
             make_provider(remote)
         self.assertEqual(make_provider(dataclasses.replace(remote, allow_remote=True)).model, MODEL)
-        self.assertEqual(make_provider(remote.__class__(base_url="http://127.0.0.1:1"), model="x").model, "x")
+        self.assertEqual(make_provider(LLMConfig(url="http://127.0.0.1:1"), model="x").model, "x")
 
 
 class ConfigTest(unittest.TestCase):
     def test_section_is_parsed_and_validated(self):
-        c = parse_config({"critiq": {"enabled": True, "model": "m", "kinds": ["secret", "sast", "vuln"], "num_ctx": 16384, "max_rounds": 2,
-                                     "min_severity": "medium", "deny_globs": ["secrets/**"]}}, Path(".")).critiq
-        self.assertEqual((c.enabled, c.model, c.kinds, c.num_ctx, c.max_rounds, c.min_severity, c.deny_globs),
-                         (True, "m", ("secret", "sast_finding", "vulnerability"), 16384, 2, "medium", ("secrets/**",)))
+        c = parse_config({"critiq": {"enabled": True, "kinds": ["secret", "sast", "vuln"], "max_rounds": 2, "min_severity": "medium", "deny_globs": ["secrets/**"]}}, Path(".")).critiq
+        self.assertEqual((c.enabled, c.kinds, c.max_rounds, c.min_severity, c.deny_globs), (True, ("secret", "sast_finding", "vulnerability"), 2, "medium", ("secrets/**",)))
         d = parse_config({}, Path(".")).critiq
-        self.assertEqual((d.enabled, d.model, d.allow_remote, d.send_secret_values, d.skip_triaged, d.base_url, d.deny_globs),
-                         (False, None, False, False, True, "http://127.0.0.1:11434", DEFAULT_DENY_GLOBS))
-        for bad, msg in (({"modell": "x"}, "inconnue"), ({"kinds": ["nope"]}, "inconnue"), ({"min_severity": "huge"}, "min_severity"),
-                         ({"provider": "openai"}, "ollama")):
+        self.assertEqual((d.enabled, d.send_secret_values, d.skip_triaged, d.deny_globs), (False, False, True, DEFAULT_DENY_GLOBS))
+        for bad, msg in (({"modell": "x"}, "inconnue"), ({"kinds": ["nope"]}, "inconnue"), ({"min_severity": "huge"}, "min_severity"), ({"provider": "openai"}, "déménagé dans llm.yaml")):
             with self.assertRaisesRegex(ConfigError, msg):
                 parse_config({"critiq": bad}, Path("."))
+
+    def test_the_engine_is_parsed_from_llm_yaml(self):
+        engine = parse_llm({"model": "m", "num_ctx": 16384}, Path("."))
+        self.assertEqual((engine.provider, engine.model, engine.num_ctx, engine.allow_remote, engine.url), ("ollama", "m", 16384, False, "http://127.0.0.1:11434"))
+        for bad, msg in (({"modell": "x"}, "inconnue"), ({"provider": "openai"}, "ollama"), ({"num_ctx": 100}, "num_ctx")):
+            with self.assertRaisesRegex(ConfigError, msg):
+                parse_llm(bad, Path("."))
 
 
 class RedactionTest(unittest.TestCase):
@@ -414,7 +419,7 @@ class RunCritiqueTest(CritiqCase):
         self.assertEqual((s["critiqued"], s["cached"]), (1, 4))             # seul le constat dont le code a changé est refait
         s = self.crit(force=True)
         self.assertEqual(s["critiqued"], 5)
-        s = self.crit(dataclasses.replace(self.cfg, model="other:latest"))
+        s = self.crit(llm=dataclasses.replace(self.llm, model="other:latest"))
         self.assertEqual(s["critiqued"], 5)                                  # autre modèle : autre avis
         self.assertEqual(len(self.db.critiques(MODEL)), len(self.db.critiques("other:latest")))
 
@@ -428,7 +433,7 @@ class RunCritiqueTest(CritiqCase):
         s = self.crit(dataclasses.replace(self.cfg, min_severity="critical"))
         self.assertEqual((s["units"], s["skipped_severity"]), (0, 4))
         lines: list[str] = []
-        s = run_critique(self.db, self.data, self.run_id, dataclasses.replace(self.cfg, skip_triaged=False), max_findings=2, log=lines.append, dry_run=True)
+        s = run_critique(self.db, self.data, self.run_id, dataclasses.replace(self.cfg, skip_triaged=False), llm=self.llm, max_findings=2, log=lines.append, dry_run=True)
         self.assertEqual((s["units"], s["capped"]), (2, 3))
         self.assertTrue(any("3 au-delà de la limite" in ln for ln in lines))
 
@@ -476,17 +481,17 @@ class RunCritiqueTest(CritiqCase):
         s = self.crit(max_findings=1)
         self.assertEqual((s["errors"], len(self.ollama.chats)), (1, 2))      # 1 appel + 1 relance
         self.ollama.responder = lambda p, n: ("sleep", 3)
-        s = self.crit(dataclasses.replace(self.cfg, timeout=1), max_findings=1, force=True)
+        s = self.crit(llm=dataclasses.replace(self.llm, timeout=1), max_findings=1, force=True)
         self.assertEqual(s["errors"], 1)
         self.assertIn("délai", next(iter(self.db.critiques(MODEL).values()))["reasoning"])
 
     def test_provider_problems_abort_cleanly_before_anything_is_sent(self):
         with self.assertRaisesRegex(LLMError, "injoignable"):
-            self.crit(dataclasses.replace(self.cfg, base_url="http://127.0.0.1:1", timeout=3))
+            self.crit(llm=dataclasses.replace(self.llm, url="http://127.0.0.1:1", timeout=3))
         with self.assertRaisesRegex(LLMError, "ollama pull"):
-            self.crit(dataclasses.replace(self.cfg, model="absent:1b"))
+            self.crit(llm=dataclasses.replace(self.llm, model="absent:1b"))
         with self.assertRaisesRegex(LLMError, "endpoint local"):
-            self.crit(dataclasses.replace(self.cfg, base_url="http://10.9.8.7:11434"))
+            self.crit(llm=dataclasses.replace(self.llm, url="http://10.9.8.7:11434"))
         self.assertEqual(self.ollama.chats, [])
 
     def test_injection_suspected_is_recorded(self):
@@ -529,9 +534,11 @@ class ApplyTest(CritiqCase):
         self.crit(force=True)
         self.assertEqual(select_applicable(self.db, self.run_id), [])
 
-    def cli(self, *argv, cfg_yaml=None):
+    def cli(self, *argv, cfg_yaml=None, llm_yaml=None):
+        """Deux fichiers, comme un utilisateur : aule.yaml (comportement) et llm.yaml à côté (moteur)."""
         yaml = self.tmp / "aule.yaml"
-        yaml.write_text(cfg_yaml or f"critiq:\n  base_url: {self.ollama.url}\n  model: {MODEL}\n  timeout: 20\n")
+        yaml.write_text(cfg_yaml or "critiq: {}\n")
+        (self.tmp / "llm.yaml").write_text(llm_yaml if llm_yaml is not None else f"provider: ollama\nurl: {self.ollama.url}\nmodel: {MODEL}\ntimeout: 20\n")
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = main([*argv, "--data", str(self.data), "--config", str(yaml)])
@@ -571,14 +578,14 @@ class ApplyTest(CritiqCase):
         code, _, err = self.cli("critiq", "run", "--model", "absent:1b")
         self.assertEqual(code, 2)
         self.assertIn("ollama pull absent:1b", err)
-        code, _, err = self.cli("critiq", "run", cfg_yaml=f"critiq:\n  base_url: {self.ollama.url}\n")
+        code, _, err = self.cli("critiq", "run", llm_yaml=f"provider: ollama\nurl: {self.ollama.url}\n")
         self.assertIn("aucun modèle configuré", err)
         self.assertEqual(self.cli("critiq", "show", "zzzzzzzz")[0], 2)
 
 
 class IntegrationTest(CritiqCase):
-    def full_config(self, **critiq):
-        return dataclasses.replace(self.config, critiq=dataclasses.replace(self.cfg, **critiq))
+    def full_config(self, llm=None, **critiq):
+        return dataclasses.replace(self.config, critiq=dataclasses.replace(self.cfg, **critiq), llm=llm or self.llm)
 
     def run_with(self, config, **kw):
         lines, events = [], []
@@ -607,17 +614,18 @@ class IntegrationTest(CritiqCase):
         self.assertTrue(any("Phase 5" in ln for ln in lines))
 
     def test_an_unreachable_engine_never_spoils_the_audit(self):
-        _, lines, _ = self.run_with(self.full_config(base_url="http://127.0.0.1:1", timeout=3), critiq=True)
+        _, lines, _ = self.run_with(self.full_config(llm=dataclasses.replace(self.llm, url="http://127.0.0.1:1", timeout=3)), critiq=True)
         run_id = self.db.latest_audit_id()
         self.assertTrue(any("critique IA impossible" in ln and "injoignable" in ln and "aule critiq run" in ln for ln in lines))
         self.assertEqual(self.db.get_audit(run_id)["status"], "complete")    # pas « partial »
         self.assertTrue(self.db.entities(run_id, "secret"))
-        _, lines, _ = self.run_with(self.full_config(model=None), critiq=True)
+        _, lines, _ = self.run_with(self.full_config(llm=dataclasses.replace(self.llm, model=None)), critiq=True)
         self.assertTrue(any("aucun modèle configuré" in ln for ln in lines))
 
     def test_cli_run_flag(self):
         yaml = self.tmp / "aule.yaml"
-        yaml.write_text(f"critiq:\n  base_url: {self.ollama.url}\n  model: {MODEL}\n")
+        yaml.write_text("critiq: {}\n")
+        (self.tmp / "llm.yaml").write_text(f"provider: ollama\nurl: {self.ollama.url}\nmodel: {MODEL}\n")
         before = len(self.ollama.chats)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

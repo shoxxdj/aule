@@ -76,7 +76,7 @@ const steps = {};
 
   // 7. Graphe des liens
   await tab("Liens");
-  steps.graph = { circles: view().all(e => e.tag === "circle").length, lines: view().all(e => e.tag === "line").length, text: view().textContent };
+  steps.graph = { circles: view().all(e => e.tag === "circle").length, edges: view().all(e => (e.attrs.class || "") === "lg-edge").length, text: view().textContent };
 
   // 8. Comparaison avec un run antérieur
   await tab("Comparaison");

@@ -112,7 +112,7 @@ def run_audit(
         cfg = config.tool(tool.name)
         exes[tool.name] = tool.resolve(cfg)
         if exes[tool.name] is None:
-            where = cfg.path or tool.binary
+            where = tool.wanted(cfg)
             log(f"  ! {tool.name} : '{where}' introuvable, exécutions ignorées (voir aule.yaml : tools.{tool.name}.path)")
             continue
         if problem := tool.prerequisites(cfg, data_dir):
@@ -150,7 +150,7 @@ def run_audit(
     if critiq if critiq is not None else config.critiq.enabled:
         try:  # avis consultatif d'un modèle d'IA : n'affecte jamais le statut de l'audit
             log("Phase 5 : critique IA des résultats")
-            s = run_critique(db, data_dir, run_id, config.critiq, log=log, progress=progress)
+            s = run_critique(db, data_dir, run_id, config.critiq, llm=config.llm, log=log, progress=progress)
             log("Critique IA : " + (", ".join(f"{k} {v}" for k, v in s["verdicts"].items()) or "rien à examiner")
                 + f" ({s['cached']} en cache, {s['errors']} erreur(s))")
         except LLMError as exc:
@@ -184,7 +184,7 @@ def _build_tasks(db, data_dir, run_id, config, tools, selected, projects, projec
             if exes[tool.name] is None:
                 for m in marks:
                     db.save_tool_run(run_id, pid, tool.name, m, status="unavailable",
-                                     error=f"'{cfg.path or tool.binary}' introuvable (PATH ou aule.yaml)")
+                                     error=f"'{tool.wanted(cfg)}' introuvable (PATH ou aule.yaml)")
                 continue
             if tool.name in blocked:
                 for m in marks:

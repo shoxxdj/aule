@@ -82,6 +82,10 @@ class Tool(ABC):
     #: True si l'absence de rapport avec un code retour OK est normale (rien à analyser)
     report_optional: ClassVar[bool] = False
 
+    def wanted(self, cfg: ToolConfig) -> str:
+        """Ce que l'on cherche, pour les messages « introuvable » : le chemin configuré, sinon tous les noms essayés dans le PATH."""
+        return cfg.path or " ou ".join([self.binary, *self.alt_binaries])
+
     def resolve(self, cfg: ToolConfig) -> list[str] | None:
         """Commande de base (launcher + exécutable) ou None si introuvable."""
         target = cfg.path or self.binary
@@ -100,6 +104,18 @@ class Tool(ABC):
             names = [target] if cfg.path else [target, *self.alt_binaries]
             found = next((w for n in names if (w := shutil.which(n))), None)
         return [*launcher, found] if found else None
+
+    def version_command(self, exe: list[str]) -> list[str] | None:
+        """Commande qui affiche la version, ou None si l'exécutable n'en a pas."""
+        return [*exe, *self.version_args] if self.version_args else None
+
+    def failure_hint(self, message: str) -> str | None:
+        """Piste d'action ajoutée à l'erreur d'une exécution échouée (`message` = « code retour N : dernière ligne de stderr »)."""
+        return None
+
+    def parse_version(self, out: str, exit_code: int) -> str | None:
+        """Version lue dans la sortie de `version_command` (par défaut : sa première ligne, comme avant)."""
+        return out.splitlines()[0] if out else None
 
     def phase(self, mode: str) -> int:
         """Les phases s'exécutent dans l'ordre ; une phase dépend des résultats des précédentes."""

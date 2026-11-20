@@ -20,7 +20,6 @@ from .db import Database
 MAX_DOC_BYTES = 150 * 1024 * 1024     # au-delà : trop de mémoire pour un explorateur ; ouvrir depuis le disque
 MAX_TEXT_CHUNK = 1024 * 1024
 MAX_SCALAR = 20_000
-SKIP_DIRS_IN_TREE = {"extracted", "db"}   # arbres complets de GitTools, bases : jamais listés
 TEXT_EXT = {".txt", ".log", ".md", ".yml", ".yaml", ".xml", ".csv", ".tf", ".py", ".js", ".java", ".toml", ".ini", ".cfg", ".sh", ".html", ".htm", ".properties"}
 
 

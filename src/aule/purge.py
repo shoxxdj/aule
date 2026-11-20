@@ -1,6 +1,6 @@
 """Rétention : supprime des runs entiers ou seulement leurs données volumineuses.
 
-`data/` grossit vite : arbres complets de GitTools (un par commit), bases CodeQL, archives décompressées.
+`data/` grossit vite : arbres complets des commits reconstruits par gittools (un par commit), bases CodeQL, archives décompressées.
 Le triage, les constats et les notes sont GLOBAUX et ne sont jamais supprimés.
 Par défaut rien n'est effacé (plan seul) ; `apply=True` exécute.
 """

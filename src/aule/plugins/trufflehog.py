@@ -11,20 +11,15 @@ Options aule.yaml (tools.trufflehog.options) : verify (défaut false).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import Counter
 from pathlib import Path
 from typing import Iterator
 
 from ..config import ToolConfig
-from ..models import ParsedEntity, Project
+from ..models import ParsedEntity, Project, sha256_text as _sha
 from .base import RunContext, Tool, register
 from .gitleaks import _relative, mask
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 @register

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .models import ParsedEntity, Project
+from .models import ParsedEntity, Project, SEVERITIES
 from .runs import validate_label
 
 SCHEMA_VERSION = 6
@@ -18,7 +18,6 @@ VERDICTS = ("true_positive", "false_positive", "uncertain", "error")
 
 TRIAGE_STATUSES = ("to_review", "confirmed", "false_positive", "accepted_risk")
 FINDING_STATUSES = ("draft", "confirmed", "dismissed")
-SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit (

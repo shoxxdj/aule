@@ -13,7 +13,6 @@ Sûreté : le code audité est une DONNÉE non fiable (injection de prompt) : d�
 """
 from __future__ import annotations
 
-import fnmatch  # noqa: F401  (exposé pour les tests)
 import hashlib
 import json
 import math
@@ -25,15 +24,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .models import SEV_RANK, SKIP_DIRS
 from .config import CritiqConfig
 from .db import Database
 from .export import group_sast, group_secrets, group_vulns
-from .llm import LLMError, Provider, make_provider
+from urllib.parse import urlparse
+
+from .llm import LLMError, Provider, is_local_url, make_provider, public_url
+from .llmconf import LLMConfig
 from .report import build_report_data
 
 PROMPT_VERSION = "1"  # change si le prompt change : les avis en cache sont alors refaits
-SEV_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
-SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", "target"}
 MAX_FILE = 2 * 1024 * 1024
 SCHEMA = {
     "type": "object",
@@ -43,7 +44,7 @@ SCHEMA = {
         "reasoning": {"type": "string"},
         "injection_suspected": {"type": "boolean"},
         "need": {"type": "array", "maxItems": 4, "items": {"type": "object", "properties": {
-            "file": {"type": "string"}, "start": {"type": "integer"}, "end": {"type": "integer"}, "search": {"type": "string"}}}},
+            "file": {"type": "string"}, "start": {"type": "integer"}, "end": {"type": "integer"}, "search": {"type": "string"}, "list": {"type": "string"}}}},
     },
     "required": ["verdict", "confidence", "reasoning"],
 }
@@ -58,6 +59,29 @@ Rules:
 - Be conservative: prefer "uncertain" over a confident wrong answer. confidence is between 0 and 1.
 - Secret values are never shown to you (replaced by <SECRET>); use the local analysis of the value that is provided.
 - Reply with ONE JSON object matching the schema, nothing else. Write "reasoning" in French, concise (6 sentences maximum), citing file:line when relevant."""
+
+EXTENDED_PROMPT = """
+Extended access is ON for this review: the project owner allows you to read much more code, so do not stay uncertain for lack of context.
+- Ask for any file range {"file","start","end"} (up to %(lines)d lines per range; omit start and end to read a file from its top), a literal text search {"search"} (up to %(hits)d matches), or a directory listing {"list": "<dir>"} (use "." for the project root) to discover the relevant files.
+- You have up to %(rounds)d rounds, at most 4 items per round; each answer tells you how much extra-code budget remains.
+- Ask for what you need to be SURE: callers, the code that sanitizes or validates, configuration, tests. Do not ask for files unrelated to the question.
+- Secret values stay hidden (<SECRET>) and sensitive files are never served; that does not change."""
+
+
+def system_prompt(cfg: CritiqConfig) -> str:
+    """Le prompt système : inchangé en mode standard (donc avis en cache valides), complété en mode étendu."""
+    if not cfg.allow_more_code:
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + EXTENDED_PROMPT % {"lines": max(cfg.max_request_lines, cfg.extended_request_lines), "hits": 60, "rounds": max(cfg.max_rounds, cfg.extended_rounds)}
+
+
+def _code_budget(cfg: CritiqConfig, provider: Provider, prompt_chars: int) -> int:
+    """Caractères de code supplémentaire autorisés pour UN constat. Ollama tronque EN SILENCE le début du prompt au-delà de num_ctx (donc nos consignes) : on borne au contexte."""
+    budget = cfg.extended_budget_chars
+    if getattr(provider, "name", "") == "ollama":
+        budget = min(budget, max(0, getattr(provider, "num_ctx", 8192) * 3 - prompt_chars - 3000))
+    return budget
+
 
 _TOKEN_PATTERNS = [re.compile(p) for p in (
     r"\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\b", r"\bgh[pousr]_[A-Za-z0-9]{30,}\b", r"\bxox[baprs]-[A-Za-z0-9-]{10,}",
@@ -119,6 +143,9 @@ class CodeAccess:
     def __init__(self, root: Path, cfg: CritiqConfig, redact: Redactor, *, is_git: bool = False, commit: str | None = None):
         self.root, self.cfg, self.redact, self.is_git, self.commit = root, cfg, redact, is_git, commit
         self.deny = [_glob_re(g) for g in cfg.deny_globs]
+        more = cfg.allow_more_code  # mode étendu : plages plus longues, recherches plus larges, liste de dossiers
+        self.lines_cap = max(cfg.max_request_lines, cfg.extended_request_lines) if more else cfg.max_request_lines
+        self.max_hits, self.max_scan = (60, 20000) if more else (20, 4000)
 
     def denied(self, rel: str) -> bool:
         return any(rx.match(rel) for rx in self.deny)
@@ -165,8 +192,8 @@ class CodeAccess:
             return f"[{clean} : {err}]", meta
         lines = self.redact(text).splitlines()
         start = max(1, int(start or 1))
-        end = min(len(lines), int(end) if end else start + self.cfg.max_request_lines - 1)
-        end = min(end, start + self.cfg.max_request_lines - 1)
+        end = min(len(lines), int(end) if end else start + self.lines_cap - 1)
+        end = min(end, start + self.lines_cap - 1)
         if start > len(lines) or end < start:
             return f"[{clean} : plage hors du fichier ({len(lines)} lignes)]", meta
         body = "\n".join(f"{n:>5}| {lines[n - 1]}" for n in range(start, end + 1))
@@ -185,7 +212,7 @@ class CodeAccess:
                 path = Path(dirpath) / name
                 rel = path.relative_to(self.root).as_posix()
                 scanned += 1
-                if scanned > 4000 or len(hits) >= 20:
+                if scanned > self.max_scan or len(hits) >= self.max_hits:
                     break
                 try:
                     if self.denied(rel) or path.is_symlink() or path.stat().st_size > 1024 * 1024:
@@ -196,17 +223,55 @@ class CodeAccess:
                 if b"\0" in raw[:4096]:
                     continue
                 for n, line in enumerate(raw.decode("utf-8", "replace").splitlines(), 1):
-                    if needle in line and len(hits) < 20:
+                    if needle in line and len(hits) < self.max_hits:
                         hits.append(f"{rel}:{n}: {self.redact(line.strip())[:200]}")
-            if scanned > 4000 or len(hits) >= 20:
+            if scanned > self.max_scan or len(hits) >= self.max_hits:
                 break
         body = "\n".join(hits) or "(aucune occurrence)"
         meta.update(matches=len(hits), chars=len(body))
         shown = self.redact(needle).replace('"', "'")
         return f'<untrusted_code search="{shown}">\n{body}\n</untrusted_code>', meta
 
+    def list_dir(self, rel: str) -> tuple[str, dict]:
+        """Contenu d'un dossier (mode étendu seulement) : même confinement que `read`, sans liens symboliques ni entrées exclues (leur existence n'est pas révélée)."""
+        meta = {"list": rel, "entries": 0, "chars": 0, "kind": "list"}
+        if not self.cfg.allow_more_code:
+            return "[liste de dossier non autorisée : critiq.allow_more_code est désactivé]", meta
+        shown = (rel or ".").strip()
+        clean = "." if shown in (".", "./", "") else self._clean(shown)
+        if clean is None:
+            return f"[refusé : chemin invalide « {shown[:80]} »]", meta
+        if clean != "." and (self.denied(clean) or self.denied(clean + "/x")):
+            return f"[refusé : « {clean} » est exclu par la configuration (deny_globs)]", meta
+        target = (self.root / clean).resolve()
+        if not target.is_relative_to(self.root.resolve()) or not target.is_dir():
+            return f"[« {clean} » n'est pas un dossier du projet]", meta
+        try:
+            with os.scandir(target) as it:
+                entries = sorted(it, key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()))
+        except OSError:
+            return f"[« {clean} » illisible]", meta
+        rows, hidden = [], 0
+        for e in entries:
+            rel_e, is_dir = (e.name if clean == "." else f"{clean}/{e.name}"), e.is_dir(follow_symlinks=False)
+            if e.is_symlink() or e.name in SKIP_DIRS or self.denied(rel_e) or (is_dir and self.denied(rel_e + "/x")) or re.search(r"[\x00-\x1f\x7f]", e.name):
+                continue
+            if len(rows) >= 300:
+                hidden += 1
+                continue
+            rows.append(self.redact(e.name[:120] + ("/" if is_dir else "")) + ("" if is_dir else f"  ({e.stat(follow_symlinks=False).st_size} o)"))
+        body = "\n".join(rows) or "(dossier vide ou entièrement exclu)"
+        if hidden:
+            body += f"\n(… {hidden} entrée(s) de plus)"
+        meta.update(list=clean, entries=len(rows), chars=len(body))
+        return f'<untrusted_code list="{self.redact(clean).replace(chr(34), chr(39))}" source="working tree">\n{body}\n</untrusted_code>', meta
+
     def fulfill(self, req: dict) -> tuple[str, dict]:
-        return self.search(req["search"]) if "search" in req else self.read(req.get("file", ""), req.get("start"), req.get("end"))
+        if "search" in req:
+            return self.search(req["search"])
+        if "list" in req:
+            return self.list_dir(req["list"])
+        return self.read(req.get("file", ""), req.get("start"), req.get("end"))
 
 
 @dataclass
@@ -337,6 +402,8 @@ def parse_verdict(text: str) -> dict[str, Any]:
     for n in obj.get("need") or []:
         if isinstance(n, dict) and isinstance(n.get("search"), str) and n["search"].strip():
             need.append({"search": n["search"].strip()[:120]})
+        elif isinstance(n, dict) and isinstance(n.get("list"), str):
+            need.append({"list": n["list"].strip()[:200]})
         elif isinstance(n, dict) and isinstance(n.get("file"), str) and n["file"].strip():
             need.append({k: v for k, v in (("file", n["file"].strip()), ("start", n.get("start")), ("end", n.get("end"))) if isinstance(v, (str, int)) and not isinstance(v, bool)})
     return {"verdict": obj["verdict"], "confidence": confidence, "reasoning": str(obj.get("reasoning") or "")[:1500],
@@ -359,10 +426,13 @@ class Outcome:
 def critique_unit(provider: Provider, unit: Unit, access: CodeAccess, cfg: CritiqConfig, redact: Redactor,
                   features: dict | None, initial: tuple[str, list, list] | None = None) -> Outcome:
     user, sent, untrusted = initial or build_initial(unit, access, cfg, redact, features=features)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
+    more = cfg.allow_more_code
+    rounds_cap = max(cfg.max_rounds, cfg.extended_rounds) if more else cfg.max_rounds
+    budget, served = (_code_budget(cfg, provider, len(user)) if more else 0), 0
+    messages = [{"role": "system", "content": system_prompt(cfg)}, {"role": "user", "content": user}]
     responses, requests, round_no, retried = [], [], 1, False
     verdict = None
-    while round_no <= cfg.max_rounds:
+    while round_no <= rounds_cap:
         raw = provider.chat(messages, SCHEMA)
         responses.append(raw)
         try:
@@ -374,32 +444,62 @@ def critique_unit(provider: Provider, unit: Unit, access: CodeAccess, cfg: Criti
             messages += [{"role": "assistant", "content": raw}, {"role": "user", "content": "Your reply was not valid for the schema. Reply again with ONLY the JSON object."}]
             continue
         need = verdict["need"]
-        if verdict["verdict"] != "uncertain" or not need or round_no == cfg.max_rounds:
+        if verdict["verdict"] != "uncertain" or not need or round_no == rounds_cap:
             break
         parts = []
         for req in need:
-            text, meta = access.fulfill(req)
+            if more and served >= budget:
+                text, meta = "[budget de code supplémentaire épuisé : concluez avec ce que vous avez]", {**req, "kind": "refused", "chars": 0}
+            else:
+                text, meta = access.fulfill(req)
+                if more and served + len(text) > budget:
+                    text = text[:max(0, budget - served)] + "\n[… tronqué : budget de code supplémentaire épuisé]"
+                    meta["chars"] = len(text)
+            served += len(text)
             parts.append(text)
             sent.append(meta)
             requests.append(req)
             untrusted.append(text)
         messages += [{"role": "assistant", "content": raw},
-                     {"role": "user", "content": "Requested material (untrusted data):\n\n" + "\n\n".join(parts) + "\n\nGive your verdict now; ask for more only if essential."}]
+                     {"role": "user", "content": "Requested material (untrusted data):\n\n" + "\n\n".join(parts) + "\n\n" + ("Give your verdict now; ask for more only if essential." if not more else
+                                f"Give your verdict now if you can; otherwise ask for more (rounds left: {rounds_cap - round_no}, extra-code budget left: about {max(0, budget - served)} characters).")}]
         round_no += 1
     injected = bool(verdict and verdict["injection_suspected"]) or any(_INJECTION.search(t or "") for t in untrusted)
     return Outcome(verdict["verdict"], verdict["confidence"], verdict["reasoning"], injected, requests, sent, round_no, messages, responses)
+
+
+class _NoEngine(Provider):
+    """Moteur factice pour --dry-run : rien n'est envoyé, donc ni jeton ni connexion."""
+    name = "aucun"
+
+    def __init__(self, llm: LLMConfig | None):
+        self.model, self.base_url, self.label = (llm.model if llm else None) or "(non configuré)", public_url(llm.url) if llm else "", "modèle"
+
+    def check(self) -> list[str]:
+        return []
+
+    def chat(self, messages, schema) -> str:  # pragma: no cover
+        raise LLMError("aucun moteur : simulation")
 
 
 def _slug(model: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", model)
 
 
-def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *, provider: Provider | None = None, kinds: tuple[str, ...] | None = None,
+def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *, llm: LLMConfig | None = None, provider: Provider | None = None, kinds: tuple[str, ...] | None = None,
                  force: bool = False, max_findings: int | None = None, dry_run: bool = False, show: int = 0,
                  log: Callable[[str], None] = print, progress: Callable[[int, int, int], None] | None = None) -> dict[str, Any]:
     if not db.get_audit(run_id):
         raise KeyError(run_id)
-    provider = provider or make_provider(cfg)
+    if provider is None:
+        try:
+            if llm is None:
+                raise LLMError("aucun moteur configuré : créez llm.yaml (voir llm.example.yaml, ou `aule llm migrate`)")
+            provider = make_provider(llm)
+        except LLMError:
+            if not dry_run:
+                raise
+            provider = _NoEngine(llm)  # --dry-run n'envoie rien : il ne doit exiger ni jeton ni endpoint autorisé
     if not dry_run:
         provider.check()
     kinds = kinds or cfg.kinds
@@ -413,14 +513,23 @@ def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *
     cap = max_findings or cfg.max_findings
     capped = max(0, len(units) - cap)
     units = units[:cap]
-    summary: dict[str, Any] = {"model": provider.model, "units": len(units), "critiqued": 0, "cached": 0, "errors": 0, "aborted": None,
+    summary: dict[str, Any] = {"model": provider.model, "more_code": cfg.allow_more_code, "units": len(units), "critiqued": 0, "cached": 0, "errors": 0, "aborted": None,
                                "skipped_triaged": skipped["triaged"], "skipped_severity": skipped["severity"], "capped": capped,
                                "verdicts": Counter(), "prompts": []}
-    where = cfg.base_url
+    where = getattr(provider, "base_url", "")
     log(f"Critique IA : {len(units)} constat(s) à examiner par « {provider.model} » ({where})"
         + (f", {skipped['triaged']} déjà triés ignorés" if skipped["triaged"] else "") + (f", {capped} au-delà de la limite" if capped else ""))
+    if not dry_run and not is_local_url(where):
+        log(f"  ⚠ moteur distant : des extraits du code audité sont envoyés à {urlparse(where).netloc}")
+    for w in getattr(provider, "warnings", []):
+        log(f"  ⚠ {w}")
+    if not dry_run and provider.name == "librechat":
+        log("  ⚠ chaque appel consomme le solde de jetons du compte LibreChat (total en fin de critique)")
     if cfg.send_secret_values:
         log("  ⚠ send_secret_values : les valeurs de secrets SONT envoyées au modèle")
+    if cfg.allow_more_code:
+        log(f"  ⚠ allow_more_code : le modèle peut réclamer beaucoup plus de code (jusqu'à {max(cfg.max_rounds, cfg.extended_rounds)} tours, {max(cfg.max_request_lines, cfg.extended_request_lines)} lignes "
+            f"par plage, listes de dossiers, {cfg.extended_budget_chars} caractères par constat) : il lui sera donné automatiquement (secrets et fichiers exclus restent protégés)")
     raw_dir = data_dir / "runs" / run_id / "critiq" / _slug(provider.model)
     consecutive = 0
     for i, unit in enumerate(units, 1):
@@ -430,13 +539,15 @@ def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *
         access = CodeAccess(Path(proj.get("path", ".")), cfg, redact, is_git=bool(proj.get("is_git")), commit=commit)
         features = secret_features(unit.rep["secret"]) if unit.kind == "secret" and unit.rep.get("secret") else None
         initial = build_initial(unit, access, cfg, redact, features=features)
-        sha = hashlib.sha256(json.dumps([PROMPT_VERSION, initial[0]], ensure_ascii=False).encode()).hexdigest()
+        digest = lambda extra: hashlib.sha256(json.dumps([PROMPT_VERSION, initial[0], *extra], ensure_ascii=False).encode()).hexdigest()  # noqa: E731
+        sha_std, sha_ext = digest([]), digest(["more-code"])  # le mode n'entre dans l'empreinte que s'il est étendu : les avis déjà en cache restent valides
+        sha, reusable = (sha_ext, {sha_ext}) if cfg.allow_more_code else (sha_std, {sha_std, sha_ext})  # un avis obtenu avec plus de code vaut aussi pour une relecture standard (l'inverse non)
         if dry_run:
             if len(summary["prompts"]) < show:
-                summary["prompts"].append({"unit": f"{unit.project} · {unit.label} · {unit.location}", "system": SYSTEM_PROMPT, "user": initial[0], "sent": initial[1]})
+                summary["prompts"].append({"unit": f"{unit.project} · {unit.label} · {unit.location}", "system": system_prompt(cfg), "user": initial[0], "sent": initial[1]})
             continue
         cached = db.critiques_for(unit.fingerprints, provider.model)
-        if not force and len(cached) == len(unit.fingerprints) and all(c["evidence_sha"] == sha and c["verdict"] != "error" for c in cached.values()):
+        if not force and len(cached) == len(unit.fingerprints) and all(c["evidence_sha"] in reusable and c["verdict"] != "error" for c in cached.values()):
             summary["cached"] += 1
             summary["verdicts"][next(iter(cached.values()))["verdict"]] += 1
             if progress:
@@ -460,7 +571,7 @@ def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *
                          reasoning=out.reasoning, requests=out.requests, sent=out.sent, rounds=out.rounds, injection_suspected=out.injection_suspected)
         raw_dir.mkdir(parents=True, exist_ok=True)
         (raw_dir / f"{unit.fingerprints[0][:20]}.json").write_text(json.dumps({
-            "fingerprints": unit.fingerprints, "model": provider.model, "provider": provider.name, "evidence_sha": sha, "prompt_version": PROMPT_VERSION,
+            "fingerprints": unit.fingerprints, "model": provider.model, "provider": provider.name, "evidence_sha": sha, "prompt_version": PROMPT_VERSION, "mode": "extended" if cfg.allow_more_code else "standard",
             "messages": out.messages, "responses": out.responses,
             "outcome": {"verdict": out.verdict, "confidence": out.confidence, "reasoning": out.reasoning, "injection_suspected": out.injection_suspected,
                         "requests": out.requests, "sent": out.sent, "rounds": out.rounds}}, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -474,6 +585,7 @@ def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *
         if progress:
             progress(i, len(units), 5)
     summary["verdicts"] = dict(summary["verdicts"])
+    summary["tokens"] = int(getattr(provider, "tokens", 0) or 0)
     return summary
 
 

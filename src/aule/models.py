@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,3 +34,13 @@ class ParsedEntity:
     kind: str
     fingerprint: str
     data: dict[str, Any] = field(default_factory=dict)
+
+
+# --- constantes et aides partagées (étaient recopiées dans plusieurs modules) ---------------------------------------
+SEVERITIES = ("critical", "high", "medium", "low", "info")            # du plus grave au moins grave
+SEV_RANK = {s: len(SEVERITIES) - 1 - i for i, s in enumerate(SEVERITIES)}   # critical 4 … info 0
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", "target", ".gradle", ".idea", ".tox"}   # jamais parcourus (recherche, liens, navigation)
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()

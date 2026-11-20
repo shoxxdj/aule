@@ -23,7 +23,8 @@ import shutil
 from .db import FINDING_STATUSES, SEVERITIES, TRIAGE_STATUSES, Database
 from .export import FORMATS, ExportError, collect, write_export
 from .links import LINK_TYPES, compute_relations, describe
-from .llm import LLMError
+from .llm import LLMError, PROBE_MESSAGE as PROBE_TEXT, make_provider, public_url
+from .llmconf import migrate
 from .diff import DEFAULT_KINDS, diff_runs, format_diff
 from .doctor import run_doctor, summarize
 from .orchestrator import AuditError, reparse, run_audit
@@ -45,6 +46,8 @@ def _n(value: int) -> str:
 def cmd_run(args, db: Database, config: Config) -> int:
     split = lambda text: [n.strip() for n in text.split(",") if n.strip()]  # noqa: E731
     names = split(args.tools) if args.tools else None
+    if args.more_code:
+        config = dataclasses.replace(config, critiq=dataclasses.replace(config.critiq, allow_more_code=True))
     try:
         extra = split(args.with_tools or "") + (["gittools"] if args.history else [])  # outils optionnels à ajouter
         if extra:
@@ -86,7 +89,7 @@ def cmd_tools(args, db: Database | None, config: Config) -> int:
             cfg = config.tool(tool.name)
             exe = tool.resolve(cfg)
             rows.append({"name": tool.name, "enabled": tool.name in enabled, "modes": ",".join(tool.modes), "found": bool(exe), "path": " ".join(exe) if exe else "",
-                         "wanted": cfg.path or tool.binary, "version": (tool_version(tool, exe, cfg.env) or "") if exe else ""})
+                         "wanted": tool.wanted(cfg), "version": (tool_version(tool, exe, cfg.env) or "") if exe else ""})
         pretty.tools(ui, rows, str(config.source) if config.source else None)
         return 0
     if config.source:
@@ -102,7 +105,7 @@ def cmd_tools(args, db: Database | None, config: Config) -> int:
         if exe:
             print(f"{head} {' '.join(exe)}  {tool_version(tool, exe, cfg.env) or ''}")
         else:
-            print(f"{head} INTROUVABLE : '{cfg.path or tool.binary}' -> renseignez tools.{tool.name}.path dans aule.yaml")
+            print(f"{head} INTROUVABLE : '{tool.wanted(cfg)}' -> renseignez tools.{tool.name}.path dans aule.yaml")
     return 0
 
 
@@ -200,6 +203,9 @@ def cmd_links(args, db: Database, config: Config) -> int:
     rels = [r for r in db.list_relations(run_id) if not args.type or r["type"] == args.type]
     if args.project:
         rels = [r for r in rels if args.project in (names.get(r["src_id"]), names.get(r["dst_id"]))]
+    if ui.forge:
+        pretty.links(ui, rels, names, run_id)
+        return 0
     for r in sorted(rels, key=lambda r: (r["type"], names.get(r["src_id"], ""), names.get(r["dst_id"], ""))):
         print(f"[{r['type']}] {describe(r, names)}")
     print(f"{len(rels)} lien(s) dans {run_id}")
@@ -467,12 +473,81 @@ def cmd_serve(args, db, config: Config) -> int:
     return 0
 
 
+def _sent_label(x: dict) -> str:
+    """Ce qui a été servi au modèle : une recherche, la liste d'un dossier, ou une plage de fichier."""
+    if x.get("search"):
+        return f"recherche « {x['search']} » ({x.get('matches')} occurrence(s))"
+    if x.get("kind") in ("list", "refused") and x.get("list") is not None:
+        return f"liste du dossier « {x['list']} » ({x.get('entries', 0)} entrée(s))"
+    return f"{x.get('file')}:{x.get('start')}-{x.get('end')}"
+
+
+def cmd_llm_migrate(args, db, config) -> int:
+    """Travaille sur le fichier BRUT : l'ancien format (réglages du moteur dans `critiq`) est refusé au chargement, donc cette commande passe avant."""
+    from .config import DEFAULT_CONFIG_NAME, LEGACY_CONFIG_NAME, ConfigError
+    path = args.config or next((c for c in (Path.cwd() / DEFAULT_CONFIG_NAME, Path.cwd() / LEGACY_CONFIG_NAME) if c.is_file()), None)
+    if path is None or not path.is_file():
+        ui.error("aucun aule.yaml à migrer (indiquez --config)")
+        return 2
+    out = args.out or path.resolve().parent / "llm.yaml"
+    try:
+        notes, keys = migrate(path, out, force=args.force)
+    except ConfigError as exc:
+        ui.error(str(exc))
+        return 2
+    ui.ok(f"{out} créé (droits 600) à partir de la section critiq de {path}")
+    for note in notes:
+        ui.warn(note)
+    ui.say(f"À faire : supprimez de la section critiq de {path} ces clés, désormais dans llm.yaml : {', '.join(keys)}")
+    ui.warn("llm.yaml contient la clé d'API : ne le versionnez pas (ajoutez-le à .gitignore)")
+    return 0
+
+
+def _critiq_check(args, config: Config) -> int:
+    """Vérifie le moteur IA (connexion, jeton, modèle / agent) SANS envoyer de code."""
+    if config.llm is None:
+        ui.error("aucun moteur configuré : créez llm.yaml (voir llm.example.yaml, ou `aule llm migrate` pour reprendre l'ancienne section critiq)")
+        return 2
+    llm = dataclasses.replace(config.llm, model=args.model or config.llm.model)
+    if ui.forge:
+        ui.heading("search", "Moteur IA", "vérification de la connexion : aucun code n'est envoyé")
+        ui.say()
+    try:
+        provider = make_provider(llm)
+        for line in provider.describe():
+            (ui.warn(line.removeprefix("⚠ "), plain=line) if line.startswith("⚠ ") else ui.say(("  " + ui.icon("dot", "ember") + " " + line) if ui.forge else line))
+        ids = provider.check()
+    except LLMError as exc:
+        ui.error(str(exc))
+        return 2
+    if provider.name == "custom" and not llm.check_url:
+        ui.ok("Configuration valide (aucune requête envoyée : check_url absent de llm.yaml). Essai réel, sans code : aule critiq check --probe")
+    else:
+        ui.ok(f"Connexion établie : {provider.label} « {provider.model} » disponible ({len(ids)} {provider.label}(s) visible(s) avec ce jeton)." + (" Aucun code n'a été envoyé." if not ui.forge else ""))
+    if args.probe:
+        probe = getattr(provider, "probe", None)
+        if probe is None:
+            ui.error("--probe : disponible avec provider: custom seulement")
+            return 2
+        try:
+            reply = probe()
+        except LLMError as exc:
+            ui.error(f"essai en échec : {exc}")
+            return 2
+        ui.ok(f"Réponse du modèle à « {PROBE_TEXT} » : {reply.strip()[:120]} ({provider.tokens} jeton(s))")
+    ui.hint("Aucun code n'a été envoyé. Essai réel : aule critiq run --max 3")
+    return 0
+
+
 def cmd_critiq(args, db: Database, config: Config) -> int:
+    if args.critiq_cmd == "check":
+        return _critiq_check(args, config)
     run_id = resolve_run(db, args.run)
     if not run_id or not db.get_audit(run_id):
         print("Aucun audit. Lancez d'abord : aule run <dossier>", file=sys.stderr)
         return 1
-    cfg = dataclasses.replace(config.critiq, model=args.model or config.critiq.model)
+    cfg = dataclasses.replace(config.critiq, **({"allow_more_code": True} if getattr(args, "more_code", False) else {}))
+    llm = dataclasses.replace(config.llm, model=args.model or config.llm.model) if config.llm else None
     try:
         if args.critiq_cmd == "run":
             kinds = tuple(dict.fromkeys(CRITIQ_KINDS[k.strip()] for k in args.kind.split(","))) if args.kind else None
@@ -480,11 +555,11 @@ def cmd_critiq(args, db: Database, config: Config) -> int:
             if ui.forge and not args.dry_run:
                 with pretty.RunPrinter(ui, db, None) as printer:
                     printer.log("Phase 5 : critique IA des résultats")
-                    summary = run_critique(db, args.data, run_id, cfg, log=printer.log, progress=printer.progress, **crit_args)
+                    summary = run_critique(db, args.data, run_id, cfg, llm=llm, log=printer.log, progress=printer.progress, **crit_args)
             else:
-                summary = run_critique(db, args.data, run_id, cfg, **crit_args)
+                summary = run_critique(db, args.data, run_id, cfg, llm=llm, **crit_args)
             if args.dry_run:
-                print(f"\nSimulation : rien n'a été envoyé. {summary['units']} constat(s) seraient examinés par « {cfg.model or '(modèle non configuré)'} » ({cfg.base_url}).")
+                print(f"\nSimulation : rien n'a été envoyé. {summary['units']} constat(s) seraient examinés par « {(llm.model if llm else None) or '(modèle non configuré)'} » ({public_url(llm.url) if llm else 'aucun llm.yaml'}).")
                 for pr in summary["prompts"]:
                     print(f"\n{'=' * 78}\n{pr['unit']}\nCode envoyé : " + (", ".join(f"{x.get('file')}:{x.get('start')}-{x.get('end')} ({x['chars']} car.)" for x in pr["sent"]) or "aucun")
                           + f"\n{'-' * 78}\n{pr['user']}")
@@ -495,7 +570,8 @@ def cmd_critiq(args, db: Database, config: Config) -> int:
                 return 0
             v = summary["verdicts"]
             ui.ok(f"Terminé : {summary['critiqued']} nouveau(x) avis, {summary['cached']} en cache, {summary['errors']} erreur(s) — "
-                  + (", ".join(f"{k} {n}" for k, n in v.items()) or "aucun avis") + ". Avis consultatifs : à vérifier avant tout triage.")
+                  + (", ".join(f"{k} {n}" for k, n in v.items()) or "aucun avis") + ". Avis consultatifs : à vérifier avant tout triage."
+                  + (f" Jetons consommés : {summary['tokens']}." if summary.get("tokens") else ""))
             return 1 if summary["aborted"] else 0
         crit = db.critiques(args.model)
         names = {p["id"]: p["name"] for p in db.list_projects(run_id)}
@@ -522,7 +598,7 @@ def cmd_critiq(args, db: Database, config: Config) -> int:
                   + f"\n\n{c['reasoning']}\n")
             print("Code envoyé au modèle :")
             for x in c["sent"]:
-                print("  - " + (f"recherche « {x['search']} » ({x.get('matches')} occurrence(s))" if x.get("search") else f"{x.get('file')}:{x.get('start')}-{x.get('end')}") + f" ({x['chars']} car., {x.get('kind')})")
+                print("  - " + _sent_label(x) + f" ({x['chars']} car., {x.get('kind')})")
             if not c["sent"]:
                 print("  (aucun extrait)")
             print(f"\nConversation brute : {args.data / 'runs' / run_id / 'critiq' / _slug(c['model']) / (fp[:20] + '.json')}")
@@ -774,6 +850,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="reconstruit l'historique des .git avec gittools et le scanne (mode gitleaks history)")
     run.add_argument("--with", dest="with_tools", metavar="OUTILS",
                      help="ajoute des outils optionnels aux outils activés : opengrep, dependency-check, gittools")
+    run.add_argument("--more-code", action="store_true", help="avec --critiq : le modèle peut réclamer beaucoup plus de code, donné automatiquement (critiq.allow_more_code)")
     run.add_argument("--critiq", action="store_true",
                      help="une fois les outils passés, demande l'avis d'un modèle d'IA (Ollama) sur les résultats (section critiq de aule.yaml)")
     run.add_argument("--jobs", type=int, help="exécutions en parallèle (défaut : YAML, sinon min(4, CPU))")
@@ -911,7 +988,7 @@ def build_parser() -> argparse.ArgumentParser:
     pg.add_argument("--older-than", type=int, metavar="JOURS", help="runs plus anciens que N jours")
     pg.add_argument("--keep", type=int, metavar="N", help="ne garde que les N runs les plus récents")
     pg.add_argument("--heavy", action="store_true",
-                    help="sur les runs conservés : supprime archives décompressées, bases CodeQL, arbres GitTools (rapports gardés)")
+                    help="sur les runs conservés : supprime archives décompressées, bases CodeQL, arbres des commits reconstruits (rapports gardés)")
     pg.add_argument("--yes", action="store_true", help="applique (sinon : plan seulement)")
     pg.set_defaults(func=cmd_purge)
 
@@ -934,21 +1011,32 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--open", action="store_true", help="ouvre le navigateur")
     sv.set_defaults(func=cmd_serve)
 
+    lm = sub.add_parser("llm", help="le moteur d'IA : llm.yaml (secrets compris, jamais dans l'environnement)")
+    lsub = lm.add_subparsers(dest="llm_cmd", required=True)
+    lmig = lsub.add_parser("migrate", parents=[common], help="crée llm.yaml à partir de l'ancienne section critiq de aule.yaml (clés tirées de l'environnement ou d'un fichier comprises)")
+    lmig.add_argument("--out", type=Path, help="fichier à écrire (défaut : llm.yaml à côté de aule.yaml)")
+    lmig.add_argument("--force", action="store_true", help="écrase un llm.yaml existant")
+    lmig.set_defaults(func=cmd_llm_migrate, needs_db=False, raw_config=True)
+
     cq = sub.add_parser("critiq", help="avis d'un modèle d'IA (Ollama) sur les résultats : consultatif, ne modifie jamais le triage seul")
     csub = cq.add_subparsers(dest="critiq_cmd", required=True)
 
     def cq_common(p: argparse.ArgumentParser, run: bool = True) -> None:
         if run:
             p.add_argument("run", nargs="?", help="défaut : le dernier")
-        p.add_argument("--model", help="modèle (défaut : critiq.model)")
+        p.add_argument("--model", help="modèle (défaut : `model` de llm.yaml)")
 
     c_run = csub.add_parser("run", parents=[common], help="demande l'avis du modèle (avis en cache réutilisés)")
     cq_common(c_run)
     c_run.add_argument("--kind", help="secret,sast,vuln (défaut : critiq.kinds)")
     c_run.add_argument("--force", action="store_true", help="refait les avis même en cache")
+    c_run.add_argument("--more-code", action="store_true", help="le modèle peut réclamer beaucoup plus de code (fichiers entiers, dossiers, davantage de tours), donné automatiquement : critiq.allow_more_code")
     c_run.add_argument("--max", type=int, metavar="N", help="au plus N constats (défaut : critiq.max_findings)")
     c_run.add_argument("--dry-run", action="store_true", help="n'envoie RIEN : compte et, avec --show, affiche le texte exact qui serait envoyé")
     c_run.add_argument("--show", type=int, default=0, metavar="N", help="avec --dry-run : affiche les N premiers messages")
+    c_check = csub.add_parser("check", parents=[common], help="vérifie le moteur IA (connexion, jeton, modèle ou agent) SANS envoyer de code")
+    c_check.add_argument("--model", help="modèle ou agent à tester (défaut : `model` de llm.yaml)")
+    c_check.add_argument("--probe", action="store_true", help="envoie un message anodin (« Say hello… », AUCUN code) pour valider toute la chaîne ; provider: custom")
     c_list = csub.add_parser("list", parents=[common], help="liste les avis")
     cq_common(c_list)
     c_list.add_argument("--verdict", choices=["true_positive", "false_positive", "uncertain", "error"])
@@ -1006,6 +1094,8 @@ def main(argv: list[str] | None = None) -> int:
         if not hasattr(args, name):
             setattr(args, name, default)
     ui.configure(out=sys.stdout, err=sys.stderr, mode=getattr(args, "color", "auto"), ascii_only=getattr(args, "ascii", False))
+    if getattr(args, "raw_config", False):  # commandes qui lisent le fichier brut (aule llm migrate) : l'ancien format est refusé par load_config
+        return args.func(args, None, None)
     try:
         config = load_config(args.config)
     except ConfigError as exc:

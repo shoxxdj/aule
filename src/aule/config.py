@@ -5,9 +5,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+
 import yaml
 
+from .models import SEVERITIES
+
 DEFAULT_CONFIG_NAME = "aule.yaml"
+# Noms familiers acceptés pour un outil (--tools, --with, `tools:` du YAML) -> nom réel du plugin
+TOOL_ALIASES = {"gitdump": "gittools", "git-extractor": "gittools", "git-extractor-rs": "gittools", "git-tools-rs": "gittools", "extractor": "gittools"}
 LEGACY_CONFIG_NAME = "audit.yaml"   # ancien nom, toujours reconnu (aule.yaml l'emporte)
 DEFAULT_ARCHIVE_EXTENSIONS = (".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")
 
@@ -44,26 +49,23 @@ DEFAULT_DENY_GLOBS = (".git/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key",
 
 @dataclass
 class CritiqConfig:
-    """Critique par un modèle d'IA des résultats des outils (avis consultatif ; le triage humain reste maître)."""
-
-    enabled: bool = False
-    provider: str = "ollama"
-    base_url: str = "http://127.0.0.1:11434"
-    model: str | None = None             # pas de défaut : on ne sait pas ce qui est installé
-    allow_remote: bool = False           # sinon seul un endpoint local est accepté
-    kinds: tuple[str, ...] = ("secret", "sast_finding")
+    """Comportement de la critique IA. Le MOTEUR (adresse, modèle, clé, TLS…) est dans llm.yaml, pas ici."""
+    enabled: bool = False                    # critique en fin d'audit (sinon : aule critiq run)
+    kinds: tuple[str, ...] = ("secret", "sast_finding", "vulnerability")
     min_severity: str = "low"
     max_findings: int = 200
-    context_lines: int = 15
-    max_rounds: int = 3                  # tours de « demande de code complémentaire »
+    context_lines: int = 15                  # lignes de code autour d'un constat
+    max_rounds: int = 3                      # tours où le modèle peut demander du code complémentaire
     max_request_lines: int = 120
     max_prompt_chars: int = 18000
-    timeout: int = 300
-    num_ctx: int = 8192                  # Ollama tronque en silence à 2048 par défaut : on fixe la fenêtre
-    temperature: float = 0.0
-    skip_triaged: bool = True            # ne critique pas ce que l'humain a déjà trié
-    send_secret_values: bool = False     # ⚠ envoie les secrets en clair au modèle
-    deny_globs: tuple[str, ...] = DEFAULT_DENY_GLOBS
+    skip_triaged: bool = True                # ne pas critiquer ce que l'auditeur a déjà tranché
+    send_secret_values: bool = False         # JAMAIS par défaut : les valeurs de secrets ne sont pas envoyées au modèle
+    deny_globs: tuple[str, ...] = DEFAULT_DENY_GLOBS   # fichiers jamais envoyés, même si le modèle les demande
+    # --- case à cocher : le modèle peut réclamer BEAUCOUP plus de code, et on le lui donne automatiquement (secrets, deny_globs et confinement au projet restent en vigueur)
+    allow_more_code: bool = False
+    extended_rounds: int = 8                 # tours de demandes (au lieu de max_rounds)
+    extended_request_lines: int = 600        # lignes par plage (au lieu de max_request_lines) : un fichier moyen tient en une demande
+    extended_budget_chars: int = 150000      # code supplémentaire envoyé pour UN constat (borné au contexte avec Ollama : num_ctx)
 
 
 @dataclass
@@ -74,6 +76,7 @@ class Config:
     unpack: UnpackConfig = field(default_factory=UnpackConfig)
     tools: dict[str, ToolConfig] = field(default_factory=dict)
     critiq: CritiqConfig = field(default_factory=CritiqConfig)
+    llm: "LLMConfig | None" = None          # le moteur d'IA, lu dans llm.yaml (None : pas de fichier)
     source: Path | None = None
 
     def tool(self, name: str) -> ToolConfig:
@@ -107,10 +110,24 @@ def _resolve_path(value: str, base: Path) -> str:
     return value
 
 
+def _load_llm(data: dict[str, Any], base: Path, source: Path | None):
+    """llm.yaml : à côté de aule.yaml (ou `llm_file:`, par exemple hors du dépôt). Jamais cherché quand la configuration vient d'un dictionnaire."""
+    from .llmconf import DEFAULT_LLM_NAME, load_llm
+    explicit = data.get("llm_file")
+    if explicit is None and source is None:
+        return None
+    path = Path(_resolve_path(str(explicit), base)) if explicit else base / DEFAULT_LLM_NAME
+    if path.is_file():
+        return load_llm(path)
+    if explicit:
+        raise ConfigError(f"llm_file : fichier introuvable : {path}")
+    return None
+
+
 def parse_config(data: dict[str, Any] | None, base: Path, source: Path | None = None) -> Config:
     data = data or {}
     _expect(data, dict, "racine")
-    _check_keys(data, {"jobs", "timeout", "data_dir", "unpack", "tools", "critiq"}, "racine")
+    _check_keys(data, {"jobs", "timeout", "data_dir", "unpack", "tools", "critiq", "llm_file"}, "racine")
     cfg = Config(source=source)
     if "jobs" in data:
         cfg.jobs = int(_expect(data["jobs"], int, "jobs"))
@@ -132,27 +149,34 @@ def parse_config(data: dict[str, Any] | None, base: Path, source: Path | None = 
         )
 
     if "critiq" in data:
+        from .llmconf import LEGACY_KEYS
         q = _expect(data["critiq"] or {}, dict, "critiq")
+        if moved := [k for k in q if k in LEGACY_KEYS]:  # un seul endroit pour le moteur : pas de doublons, pas de secret dans ce fichier
+            raise ConfigError(f"critiq.{', critiq.'.join(moved)} : les réglages du moteur d'IA (et ses secrets) ont déménagé dans llm.yaml. "
+                              "Lancez `aule llm migrate` pour le créer à partir de ce fichier, puis supprimez ces clés de la section critiq.")
         _check_keys(q, {f.name for f in CritiqConfig.__dataclass_fields__.values()}, "critiq")
         kinds = tuple(dict.fromkeys(CRITIQ_KINDS.get(k, k) for k in _str_list(q["kinds"], "critiq.kinds"))) if "kinds" in q else CritiqConfig.kinds
         if bad := [k for k in kinds if k not in CRITIQ_KINDS.values()]:
             raise ConfigError(f"critiq.kinds : valeur(s) inconnue(s) {bad} (attendu : secret, sast, vuln)")
-        if q.get("min_severity", "low") not in ("critical", "high", "medium", "low", "info"):
+        if q.get("min_severity", "low") not in SEVERITIES:
             raise ConfigError("critiq.min_severity : critical, high, medium, low ou info")
-        if q.get("provider", "ollama") != "ollama":
-            raise ConfigError("critiq.provider : seul « ollama » est géré pour l'instant")
+        for flag in ("enabled", "skip_triaged", "send_secret_values", "allow_more_code"):  # strict : « false » (texte) serait lu comme vrai
+            if not isinstance(q.get(flag, False), bool):
+                raise ConfigError(f"critiq.{flag} : true ou false (sans guillemets)")
         cfg.critiq = CritiqConfig(
-            enabled=bool(q.get("enabled", False)), provider="ollama", base_url=str(q.get("base_url", CritiqConfig.base_url)).rstrip("/"),
-            model=str(q["model"]) if q.get("model") else None, allow_remote=bool(q.get("allow_remote", False)), kinds=kinds,
-            min_severity=q.get("min_severity", "low"), max_findings=max(1, int(q.get("max_findings", 200))),
+            enabled=q.get("enabled", False), kinds=kinds, min_severity=q.get("min_severity", "low"), max_findings=max(1, int(q.get("max_findings", 200))),
             context_lines=max(0, int(q.get("context_lines", 15))), max_rounds=max(1, int(q.get("max_rounds", 3))),
             max_request_lines=max(10, int(q.get("max_request_lines", 120))), max_prompt_chars=max(2000, int(q.get("max_prompt_chars", 18000))),
-            timeout=max(1, int(q.get("timeout", 300))), num_ctx=max(512, int(q.get("num_ctx", 8192))),
-            temperature=float(q.get("temperature", 0.0)), skip_triaged=bool(q.get("skip_triaged", True)),
-            send_secret_values=bool(q.get("send_secret_values", False)),
+            skip_triaged=q.get("skip_triaged", True), send_secret_values=q.get("send_secret_values", False), allow_more_code=q.get("allow_more_code", False),
+            extended_rounds=max(1, min(30, int(q.get("extended_rounds", 8)))), extended_request_lines=max(20, min(5000, int(q.get("extended_request_lines", 600)))),
+            extended_budget_chars=max(5000, min(2_000_000, int(q.get("extended_budget_chars", 150000)))),
             deny_globs=tuple(_str_list(q["deny_globs"], "critiq.deny_globs")) if "deny_globs" in q else DEFAULT_DENY_GLOBS)
+    cfg.llm = _load_llm(data, base, source)
 
     for name, raw in (_expect(data.get("tools") or {}, dict, "tools")).items():
+        name = TOOL_ALIASES.get(name, name)
+        if name in cfg.tools:
+            raise ConfigError(f"tools.{name} : configuré deux fois (un alias et le nom réel désignent le même outil)")
         where = f"tools.{name}"
         t = _expect(raw or {}, dict, where)
         _check_keys(t, {"enabled", "path", "launcher", "extra_args", "env", "timeout", "max_parallel", "modes", "options"}, where)
@@ -188,7 +212,11 @@ def load_config(path: Path | None) -> Config:
     if path is None:
         candidate = next((c for c in (Path.cwd() / DEFAULT_CONFIG_NAME, Path.cwd() / LEGACY_CONFIG_NAME) if c.is_file()), None)
         if candidate is None:
-            return Config()
+            cfg = Config()
+            if (default_llm := Path.cwd() / "llm.yaml").is_file():  # sans aule.yaml, un llm.yaml du dossier courant est tout de même lu
+                from .llmconf import load_llm
+                cfg.llm = load_llm(default_llm)
+            return cfg
         path = candidate
     elif not path.is_file():
         raise ConfigError(f"fichier de configuration introuvable : {path}")
