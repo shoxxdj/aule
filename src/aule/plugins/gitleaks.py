@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 
+from ..config import ToolConfig
 from ..models import ParsedEntity, Project, sha256_text as _sha
+from ..rulesets import RuleSetError, expand, merge_gitleaks, wants_default
 from .base import RunContext, Tool, register
 
 _HISTORY_FILE_RE = re.compile(r"^(\d+)-([0-9a-fA-F]{6,40})/(.+)$")
@@ -19,10 +24,27 @@ def mask(secret: str) -> str:
 
 
 def _relative(base: Path, file: str) -> str:
+    """Chemin du fichier relatif au projet. gitleaks rapporte les chemins TELS QU'ON LES LUI DONNE : absolus avec une cible absolue, relatifs (`src/x`) avec `.`."""
+    if not os.path.isabs(file) and not re.match(r"^[A-Za-z]:[\\/]", file):
+        return re.sub(r"^(\./)+", "", file.replace("\\", "/"))
     try:
         return Path(file).resolve().relative_to(base.resolve()).as_posix()
     except (ValueError, OSError):
         return file.replace("\\", "/")
+
+
+MIN_EXTEND_VERSION = (8, 9, 0)  # `[extend] useDefault = true` : ajouter des règles sans remplacer celles par défaut
+
+
+@lru_cache(maxsize=16)
+def _gitleaks_version(exe: tuple[str, ...], env: tuple[tuple[str, str], ...]) -> tuple[int, int, int] | None:
+    """(8, 18, 4)… ou None si la version n'est pas lisible (on suppose alors une version récente ; `aule doctor` le vérifie)."""
+    try:
+        out = subprocess.run([*exe, "version"], capture_output=True, text=True, timeout=15, env={**os.environ, **dict(env)} if env else None)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", (out.stdout or "") + (out.stderr or ""))
+    return (int(m[1]), int(m[2]), int(m[3])) if m else None
 
 
 @register
@@ -69,12 +91,120 @@ class Gitleaks(Tool):
             return (ctx.raw_dir(project.name, "gittools", "extract") / "report.json").exists()
         return True
 
+    # --- vos règles (tools.gitleaks.rules) : Aulë n'en ajoute AUCUNE de lui-même ---------------------------------------
+    @staticmethod
+    def _own_config(cfg: ToolConfig) -> bool:
+        """L'utilisateur donne SA configuration à gitleaks (extra_args) : `--config` remplace alors tout, nous n'y touchons pas."""
+        return any(a in ("--config", "-c") or a.startswith(("--config=", "-c=")) for a in cfg.extra_args)
+
+    supports_rules = True
+
+    @staticmethod
+    def default_rules_mode(cfg: ToolConfig):
+        return cfg.options.get("default_rules", "auto")
+
+    def _use_default(self, cfg: ToolConfig, user_files: list[Path]) -> bool:
+        """Étendre les règles PAR DÉFAUT de gitleaks ? `true`/`false` : décidé ; `auto` : comme gitleaks, un fichier de règles les REMPLACE sauf s'il contient
+        `[extend] useDefault = true`."""
+        mode = self.default_rules_mode(cfg)
+        if mode is True or mode is False:
+            return mode
+        if cfg.default_pass:
+            return False  # la configuration par défaut a déjà tourné dans sa propre passe : la vôtre est AUTONOME (comme `gitleaks -c`), sauf `default_rules: true`
+        return wants_default(user_files)
+
+    def _rules_args(self, cfg: ToolConfig, exe: list[str], raw_dir: Path) -> list[str]:
+        """gitleaks n'accepte qu'UN `--config` : les règles de TOUS les fichiers de `rules` sont FUSIONNÉES dans `rules.toml` de la sortie brute. Sans `rules`, aucun `--config` :
+        gitleaks tourne avec SA configuration par défaut. `--config` avec `useDefault` sur une version trop ancienne REMPLACERAIT les règles par défaut (pas de `useDefault` avant 8.9.0) :
+        on ne l'ajoute alors pas (`check_rules` refuse ce cas)."""
+        if self._own_config(cfg) or not cfg.rules:
+            return []
+        user = expand(cfg.rules, {".toml"})
+        use_default = self._use_default(cfg, user)
+        version = _gitleaks_version(tuple(exe), tuple(sorted(cfg.env.items())))
+        if use_default and version is not None and version < MIN_EXTEND_VERSION:
+            return []
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        merged = raw_dir / "rules.toml"
+        merged.write_text(merge_gitleaks(user, use_default), encoding="utf-8")
+        return ["--config", str(merged.resolve())]  # absolu : le dossier de travail change (voir cwd)
+
+    def check_rules(self, cfg: ToolConfig, exe: list[str]) -> str | None:
+        if self._own_config(cfg):
+            return "tools.gitleaks.rules et un --config dans extra_args ne peuvent pas être combinés (gitleaks n'accepte qu'UN fichier de configuration) : retirez l'un des deux"
+        try:
+            user = expand(cfg.rules, {".toml"})
+            use_default = self._use_default(cfg, user)
+            merge_gitleaks(user, use_default)  # valide tout avant de lancer quoi que ce soit
+        except RuleSetError as exc:
+            return f"tools.gitleaks.rules : {exc}"
+        version = _gitleaks_version(tuple(exe), tuple(sorted(cfg.env.items())))
+        if use_default and version is not None and version < MIN_EXTEND_VERSION:
+            return (f"tools.gitleaks.rules : gitleaks {'.'.join(map(str, version))} < {'.'.join(map(str, MIN_EXTEND_VERSION))} : ses règles par défaut seraient REMPLACÉES "
+                    "par les vôtres (pas de `useDefault`) ; mettez gitleaks à jour, ou `default_rules: false` pour ne pas les étendre")
+        return None
+
+    def prerequisites(self, cfg: ToolConfig, data_dir: Path) -> str | None:
+        if "credential_rules" in cfg.options:
+            return ("tools.gitleaks.options.credential_rules n'existe plus : Aulë n'ajoute plus AUCUNE règle à gitleaks. Définissez les vôtres dans `tools.gitleaks.rules` "
+                    "(un exemple à copier et adapter : examples/gitleaks-credentials.example.toml)")
+        mode = self.default_rules_mode(cfg)
+        if not (mode is True or mode is False or mode == "auto"):  # `is` : 0 == False et 1 == True en Python, `default_rules: 0` n'est pas un booléen
+            return "tools.gitleaks.options.default_rules : true, false ou auto"
+        if not isinstance(cfg.options.get("relative_paths", True), bool):
+            return "tools.gitleaks.options.relative_paths : true ou false (sans guillemets)"
+        if "default_pass" in cfg.options:
+            return "tools.gitleaks.options.default_pass est devenu une clé de l'outil (comme `rules`) : écrivez `default_pass: true` sous `gitleaks:`, pas sous `options:`"
+        if cfg.default_pass and self._own_config(cfg):
+            return "tools.gitleaks.default_pass ne se combine pas avec un --config dans extra_args (la passe « par défaut » n'en serait plus une) : retirez l'un des deux"
+        return None
+
+    def warnings(self, cfg: ToolConfig, exe: list[str]) -> list[str]:
+        if not cfg.rules or cfg.default_pass:  # avec default_pass, la configuration par défaut a sa propre passe : rien n'est « remplacé »
+            return []
+        try:
+            user = expand(cfg.rules, {".toml"})
+        except RuleSetError:
+            return []  # check_rules l'a déjà refusé, avec le nom du fichier
+        if self._use_default(cfg, user):
+            return []
+        return ["règles PAR DÉFAUT de gitleaks NON chargées : vos fichiers de règles les remplacent, comme `gitleaks -c fichier.toml` (ajoutez `[extend] useDefault = true` "
+                "à votre fichier, ou `default_rules: true`, pour les conserver)"]
+
+    @staticmethod
+    def relative_paths(cfg: ToolConfig) -> bool:
+        return cfg.options.get("relative_paths", True) is not False
+
+    def _scan_root(self, project: Project, mode: str, ctx: RunContext) -> Path:
+        return self._extracted_dir(project, ctx) if mode == "history" else project.path
+
+    def cwd(self, project: Project, mode: str, ctx: RunContext) -> Path | None:
+        """`gitleaks dir` rapporte (et teste contre les `path` des règles et des exclusions) les chemins TELS QU'ON LES LUI DONNE : avec une cible absolue, une règle
+        `path = '^src/'` ne se déclenche JAMAIS. On l'exécute donc DANS le dossier scanné avec la cible `.`, comme `gitleaks -c fichier.toml` lancé à la main."""
+        if mode == "git" or not self.relative_paths(ctx.cfg):
+            return None
+        return self._scan_root(project, mode, ctx)
+
+    @staticmethod
+    def _anchored(args: list[str]) -> list[str]:
+        """Le dossier de travail change : un chemin RELATIF de `extra_args` garde son sens (relatif au dossier de l'auditeur) en devenant absolu."""
+        out = []
+        for arg in args:
+            name, eq, value = arg.partition("=") if arg.startswith("-") else ("", "", arg)
+            candidate = value if eq else arg
+            if candidate and not candidate.startswith("-") and not os.path.isabs(candidate) and Path(candidate).exists():
+                resolved = str(Path(candidate).resolve())
+                arg = f"{name}={resolved}" if eq else resolved
+            out.append(arg)
+        return out
+
     def build_command(self, project: Project, mode: str, report_path: Path, ctx: RunContext) -> list[str]:
-        common = ["--report-format", "json", "--report-path", str(report_path), "--no-banner", *ctx.cfg.extra_args]
+        relative = mode != "git" and self.relative_paths(ctx.cfg)
+        extra = self._anchored(ctx.cfg.extra_args) if relative else ctx.cfg.extra_args
+        common = ["--report-format", "json", "--report-path", str(report_path.resolve()), "--no-banner", *self._rules_args(ctx.cfg, ctx.exe, report_path.parent), *extra]
         if mode == "git":
             return [*ctx.exe, "git", *common, "--log-opts=--all", str(project.path)]  # toutes branches/tags
-        target = self._extracted_dir(project, ctx) if mode == "history" else project.path
-        return [*ctx.exe, "dir", *common, str(target)]
+        return [*ctx.exe, "dir", *common, "." if relative else str(self._scan_root(project, mode, ctx))]
 
     # ------------------------------------------------------------------ parsing
     def parse(self, project: Project, mode: str, report_path: Path, ctx: RunContext) -> list[ParsedEntity]:

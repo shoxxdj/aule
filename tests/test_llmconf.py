@@ -235,10 +235,12 @@ class RepositoryHygieneTest(unittest.TestCase):
             self.assertNotRegex(example, rf"^# {removed}:", removed)                                             # et aucun ancien nom n'y traîne
         self.assertNotIn("critiq:", (root / "aule.example.yaml").read_text().split("# Comportement de la critique IA")[0])
 
-    def test_docker_reads_llm_yaml_beside_the_image_config(self):
+    def test_the_docker_image_has_no_ai_and_never_copies_llm_yaml(self):
+        """L'image Docker d'Aulë est volontairement SANS IA : pas de llm.yaml dans l'image (ni sa clé d'API), critique désactivée."""
         dockerfile = (Path(__file__).parent.parent / "docker" / "Dockerfile").read_text()
-        self.assertIn("/etc/aule/llm.yaml", dockerfile)                                                         # l'image lit llm.yaml à côté de /etc/aule/aule.yaml : la note dit où le monter
-        self.assertNotRegex(dockerfile, r"(?m)^(COPY|ADD)[^\n]*llm\.yaml")                                        # et la clé n'est jamais copiée DANS l'image
+        self.assertNotRegex(dockerfile, r"(?m)^(COPY|ADD)[^\n]*llm\.yaml")                                      # la clé d'API ne va jamais dans l'image
+        self.assertIn("SANS IA", dockerfile)
+        self.assertNotIn("llm_file", (Path(__file__).parent.parent / "docker" / "aule.yaml").read_text())
 
     def test_no_secret_key_is_left_in_aule_example_yaml(self):
         text = (Path(__file__).parent.parent / "aule.example.yaml").read_text()

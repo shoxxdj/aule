@@ -22,7 +22,15 @@ from .llmconf import LLMConfig
 
 
 class LLMError(Exception):
-    pass
+    """`transient` : panne passagère du moteur (504, 503, 429, délai dépassé, connexion refusée…) qu'il est raisonnable de retenter ; sinon (clé refusée, adresse introuvable,
+    certificat inconnu, réponse illisible…) réessayer ne servirait à rien."""
+
+    def __init__(self, message: str = "", *, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
+
+
+TRANSIENT_STATUSES = frozenset({408, 425, 429, 502, 503, 504, 520, 521, 522, 523, 524})   # pas le 500 : souvent déterministe, il bloquerait tout un passage
 
 
 def is_local_url(url: str) -> bool:
@@ -75,12 +83,12 @@ class OllamaProvider(Provider):
                 detail = json.loads(detail).get("error", detail)
             except ValueError:
                 pass
-            raise LLMError(f"Ollama a répondu {exc.code} : {detail}") from exc
+            raise LLMError(f"Ollama a répondu {exc.code} : {detail}", transient=exc.code in TRANSIENT_STATUSES) from exc
         except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError) as exc:
             reason = getattr(exc, "reason", exc)
             if isinstance(reason, (socket.timeout, TimeoutError)) or "timed out" in str(reason):
-                raise LLMError(f"délai de {timeout or self.timeout}s dépassé (modèle trop lent ? `timeout` dans llm.yaml)") from exc
-            raise LLMError(f"Ollama injoignable à {self.base_url} ({reason}) : `ollama serve` est-il lancé ?") from exc
+                raise LLMError(f"délai de {timeout or self.timeout}s dépassé (modèle trop lent ? `timeout` dans llm.yaml)", transient=True) from exc
+            raise LLMError(f"Ollama injoignable à {self.base_url} ({reason}) : `ollama serve` est-il lancé ?", transient=not isinstance(reason, socket.gaierror)) from exc
         except ValueError as exc:
             raise LLMError(f"réponse d'Ollama illisible : {exc}") from exc
 
@@ -276,10 +284,21 @@ class _HttpBase(Provider):
                         wait = float(2 ** attempt)
                     time.sleep(min(max(wait, 0.0), 30.0))
                     continue
-                raise self._http_error(exc, url) from None
+                raise self._flag(self._http_error(exc, url), exc.code in TRANSIENT_STATUSES) from None
             except (urllib.error.URLError, ConnectionError, socket.timeout, TimeoutError, ssl.SSLError) as exc:
-                raise self._net_error(exc, timeout or self.timeout) from None
+                raise self._flag(self._net_error(exc, timeout or self.timeout), self._net_transient(exc)) from None
         raise LLMError("service indisponible")  # pragma: no cover
+
+    @staticmethod
+    def _flag(err: LLMError, transient: bool) -> LLMError:
+        err.transient = transient
+        return err
+
+    @staticmethod
+    def _net_transient(exc: Exception) -> bool:
+        """Délai dépassé, connexion refusée ou coupée : passager. Nom de domaine inconnu ou certificat refusé : une erreur de configuration, jamais retentée."""
+        reason = getattr(exc, "reason", exc)
+        return not (isinstance(reason, (socket.gaierror, ssl.SSLError)) and "timed out" not in str(reason))
 
     def _more(self, exc: urllib.error.HTTPError) -> str:
         """Détail d'erreur renvoyé par le serveur (JSON `error.message` ou texte), tronqué et expurgé : « — … » ou vide."""
@@ -293,8 +312,9 @@ class _HttpBase(Provider):
             err = doc.get("error") if isinstance(doc, dict) else None
             detail = str((err.get("message") if isinstance(err, dict) else err) or (doc.get("message") if isinstance(doc, dict) else "") or "")
         except ValueError:
-            pass
-        detail = self._scrub(detail[:300])
+            if detail.lstrip().startswith("<"):  # page HTML d'une passerelle (504…) : on garde le texte, pas les balises
+                detail = re.sub(r"<[^>]*>", " ", detail)
+        detail = self._scrub(" ".join(detail.split())[:300])
         return f" — {detail}" if detail else ""
 
     def _http_error(self, exc: urllib.error.HTTPError, url: str) -> LLMError:

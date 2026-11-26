@@ -21,6 +21,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable
 
+from .runner import raw_ref
 from .db import Database
 
 KINDS = ("secret", "sast_finding", "vulnerability")
@@ -169,7 +170,7 @@ def compute_clusters(db: Database, data_dir: Path | None, run_id: str, *, nested
             d = e["data"]
             rec = {"fp": e["fingerprint"], "project_id": e["project_id"], "d": d}
             if kind == "secret":
-                found = clear.get((names.get(e["project_id"]), d.get("tool") or "gitleaks", d.get("mode")), {}).get(d.get("raw_index"))
+                found = clear.get((names.get(e["project_id"]), d.get("tool") or "gitleaks", d.get("mode")), {}).get(raw_ref(d))
                 rec["clear"] = found[0] if found else None
             recs.append(rec)
         for idxs, reasons in _ALGOS[kind](recs):

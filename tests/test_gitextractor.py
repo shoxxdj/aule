@@ -561,7 +561,9 @@ class PackagingTest(unittest.TestCase):
         self.assertNotIn("GITTOOLS_COMMIT", dockerfile)
         self.assertNotIn("git-dumper", [l for l in dockerfile.splitlines() if l.startswith("COPY")][0])  # le téléchargeur n'entre pas dans l'image
         self.assertNotIn("extractor.sh", (root / "docker" / "aule.yaml").read_text())
-        self.assertIn("gittools: {}", (root / "docker" / "aule.yaml").read_text())
+        import yaml
+        docker_cfg = yaml.safe_load((root / "docker" / "aule.yaml").read_text())["tools"]["gittools"]
+        self.assertEqual(docker_cfg, {"enabled": True})                                                  # activé, SANS chemin : l'exécutable est cherché dans le PATH de l'image
 
     def test_example_config_documents_the_new_default(self):
         import yaml

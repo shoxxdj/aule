@@ -5,12 +5,12 @@ sur le disque : pom.xml, package-lock.json, *.jar...). Phase 2, une exécution �
 H2 partagée, non prévue pour les accès concurrents).
 
 Préparation : `aule update dependency-check` télécharge la base NVD (long ; une clé d'API NVD est vivement
-recommandée). La clé se donne par variable d'environnement, jamais dans le YAML ; elle est masquée dans
-cmd.txt, meta.json et la base.
+recommandée). La clé se donne dans aule.yaml (`nvd_api_key`, chmod 600) et nulle part ailleurs : aucun secret n'est lu dans
+l'environnement. Elle est masquée dans cmd.txt, meta.json, la base et les journaux.
 
 Options aule.yaml (tools.dependency-check.options) :
   data_path           dossier de la base (défaut : <data>/depcheck-db)
-  nvd_api_key_env     nom de la variable d'environnement de la clé (défaut : NVD_API_KEY)
+  nvd_api_key         la clé d'API NVD, entre guillemets (aule.yaml : chmod 600, ne pas versionner)
   update              false -> --noupdate (après `aule update`) ; défaut true
   enable_experimental true -> analyseurs expérimentaux (Go, Dart, Swift, C/C++...)
   formats             formats de rapport (défaut [JSON]) ; JSON est toujours produit, HTML est conservé en brut
@@ -18,7 +18,7 @@ Options aule.yaml (tools.dependency-check.options) :
 from __future__ import annotations
 
 import json
-import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -51,8 +51,26 @@ class DependencyCheck(Tool):
     def _db_path(self, cfg: ToolConfig, data_dir: Path) -> Path:
         return Path(cfg.options.get("data_path") or data_dir / "depcheck-db")
 
+    secret_options = ("nvd_api_key",)
+
+    @staticmethod
+    def check_options(cfg: ToolConfig) -> str | None:
+        """Message à destination de l'auditeur si une option est invalide (sans jamais recopier la clé)."""
+        if "nvd_api_key_env" in cfg.options:
+            return "tools.dependency-check.options.nvd_api_key_env n'existe plus : aucun secret en variable d'environnement, écrivez la clé dans `nvd_api_key`"
+        key = cfg.options.get("nvd_api_key")
+        if isinstance(key, str) and not key.strip():
+            return None  # vide : « pas de clé »
+        if key is not None and not (isinstance(key, str) and re.fullmatch(r"[\x21-\x7e]+", key.strip())):
+            return "tools.dependency-check.options.nvd_api_key : texte ASCII imprimable sans espace attendu (entre guillemets)"
+        return None
+
+    def prerequisites(self, cfg: ToolConfig, data_dir: Path) -> str | None:
+        return self.check_options(cfg)
+
     def _api_key(self, cfg: ToolConfig) -> str | None:
-        return os.environ.get(str(cfg.options.get("nvd_api_key_env") or "NVD_API_KEY")) or None
+        key = cfg.options.get("nvd_api_key")
+        return key.strip() if isinstance(key, str) and key.strip() else None
 
     def _ecosystems(self, project: Project, ctx: RunContext) -> set[str]:
         wanted = SUPPORTED | (EXPERIMENTAL if ctx.cfg.options.get("enable_experimental") else set())
@@ -138,9 +156,11 @@ class DependencyCheck(Tool):
     def update(self, cfg: ToolConfig, exe: list[str] | None, data_dir: Path, log: Callable[[str], None]) -> None:
         if exe is None:
             raise ToolError("dependency-check introuvable (tools.dependency-check.path dans aule.yaml)")
+        if problem := self.check_options(cfg):
+            raise ToolError(problem)
         key = self._api_key(cfg)
         if not key:
-            log("  ! pas de clé d'API NVD (variable NVD_API_KEY) : la mise à jour peut durer plusieurs heures")
+            log("  ! pas de clé d'API NVD (`nvd_api_key` dans aule.yaml) : la mise à jour peut durer plusieurs heures")
         log(f"Mise à jour de la base : {self._db_path(cfg, data_dir)} (patience…)")
         try:
             out = subprocess.run([*exe, "--updateonly", *self._common_args(cfg, data_dir)],

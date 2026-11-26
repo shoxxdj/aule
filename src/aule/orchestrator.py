@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .config import Config, ToolConfig
+from .config import Config, ToolConfig, loose_secret_warning
 from .db import Database, now_iso
 from .discovery import discover_projects
 from .correlate import correlate_run
@@ -19,7 +19,7 @@ from .llm import LLMError
 from .models import Project
 from .plugins import load_plugins, select_tools
 from .plugins.base import PLACEHOLDER_MODE, RunContext, Tool
-from .runner import TaskResult, execute, tool_version
+from .runner import TaskResult, execute, tool_version, parse_task
 from .unpack import unpack_projects
 
 Log = Callable[[str], None]
@@ -61,6 +61,21 @@ def _modes(tool: Tool, cfg: ToolConfig, selected: set[str]) -> list[str]:
     return [m for m in modes if tool.mode_requires.get(m, tool.name) in selected | {tool.name}]
 
 
+def rules_problem(tool: Tool, cfg: ToolConfig, exe: list[str]) -> str | None:
+    """`tools.<outil>.rules` : refusé pour un outil sans règles personnalisables, pour un chemin introuvable, ou si l'outil juge son jeu de règles invalide."""
+    if not (cfg.rules or cfg.default_pass):
+        return None
+    if not tool.supports_rules:
+        supported = ", ".join(sorted(n for n, t in load_plugins().items() if t.supports_rules))
+        key = "rules" if cfg.rules else "default_pass"
+        return f"tools.{tool.name}.{key} : {tool.name} n'a pas de règles personnalisables (outils qui en ont : {supported})"
+    if not cfg.rules:
+        return None
+    if missing := [r for r in cfg.rules if not Path(r).exists()]:
+        return f"tools.{tool.name}.rules : introuvable : {', '.join(missing)}"
+    return tool.check_rules(cfg, exe)
+
+
 def run_audit(
     db: Database, data_dir: Path, root: Path, *, config: Config | None = None,
     tool_names: list[str] | None = None, jobs: int | None = None, timeout: int | None = None,
@@ -71,6 +86,8 @@ def run_audit(
     if not root.is_dir():
         raise AuditError(f"{root} n'est pas un dossier")
     tools = select_tools(config, tool_names)
+    if warning := loose_secret_warning(config, tools):
+        log(f"  ! {warning}")
     selected = {t.name for t in tools}
     projects = discover_projects(root, exclude=(data_dir, *exclude))
     if not projects:
@@ -115,10 +132,15 @@ def run_audit(
             where = tool.wanted(cfg)
             log(f"  ! {tool.name} : '{where}' introuvable, exécutions ignorées (voir aule.yaml : tools.{tool.name}.path)")
             continue
-        if problem := tool.prerequisites(cfg, data_dir):
+        if problem := rules_problem(tool, cfg, exes[tool.name]) or tool.prerequisites(cfg, data_dir):
             blocked[tool.name] = problem
             log(f"  ! {tool.name} : {problem}")
             continue
+        for warning in tool.warnings(cfg, exes[tool.name]):
+            log(f"  ! {tool.name} : {warning}")
+        if cfg.default_pass:
+            log(f"  ! {tool.name} : default_pass sans `rules` : rien à ajouter, une seule passe (la configuration par défaut)" if not cfg.rules else
+                f"  ! {tool.name} : default_pass : DEUX passes par mode (configuration par défaut seule, puis avec vos règles) : l'analyse dure deux fois plus longtemps")
         versions[tool.name] = " · ".join(filter(None, [tool_version(tool, exes[tool.name], cfg.env),
                                                        tool.version_info(cfg, data_dir)])) or None
         if notice := tool.notice(cfg):
@@ -246,8 +268,7 @@ def _record(db: Database, data_dir: Path, run_id: str, task: Task, result: TaskR
     status, error, entities = result.status, result.error, []
     if status == "ok":
         try:
-            entities = task.tool.parse(task.project, task.mode,
-                                       data_dir / task.raw_rel / task.tool.report_filename, task.ctx)
+            entities = parse_task(task.tool, task.project, task.mode, data_dir / task.raw_rel, task.ctx)
         except Exception as exc:  # sortie brute conservée : re-parsable avec `aule reparse`
             status, error = "parse_error", f"{type(exc).__name__}: {exc}"
     db.save_tool_run(
@@ -275,7 +296,7 @@ def reparse(db: Database, data_dir: Path, run_id: str, config: Config | None = N
         project = Project(p["name"], Path(p["path"]), bool(p["is_git"]), p["head_commit"], p["parent"], p["origin"])
         ctx = RunContext(data_dir, run_id, config.tool(tool.name), [])
         try:
-            entities = tool.parse(project, tr["mode"], data_dir / tr["raw_dir"] / tool.report_filename, ctx)
+            entities = parse_task(tool, project, tr["mode"], data_dir / tr["raw_dir"], ctx)
             status, error = "ok", None
         except Exception as exc:
             entities, status, error = [], "parse_error", f"{type(exc).__name__}: {exc}"

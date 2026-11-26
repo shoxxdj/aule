@@ -5,7 +5,7 @@ import json
 import os
 import shutil
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, ClassVar
 
@@ -56,6 +56,8 @@ class Tool(ABC):
     name: ClassVar[str]
     binary: ClassVar[str]
     alt_binaries: ClassVar[tuple[str, ...]] = ()  # autres noms cherchés dans le PATH
+    supports_rules = False                 # accepte `tools.<outil>.rules` (dossiers de règles personnalisées, tous appliqués)
+    secret_options: tuple[str, ...] = ()   # options de aule.yaml qui portent une clé d'API (pour avertir si le fichier est lisible par d'autres)
     version_args: ClassVar[tuple[str, ...] | None] = ("--version",)  # None = pas de version
     modes: ClassVar[tuple[str, ...]] = ("default",)
     default_enabled: ClassVar[bool] = True  # False = option (active via aule.yaml, --tools ou --with)
@@ -108,6 +110,21 @@ class Tool(ABC):
     def version_command(self, exe: list[str]) -> list[str] | None:
         """Commande qui affiche la version, ou None si l'exécutable n'en a pas."""
         return [*exe, *self.version_args] if self.version_args else None
+
+    def passes(self, cfg: ToolConfig) -> list[tuple[str, ToolConfig]]:
+        """Passes d'UNE tâche : [(nom, configuration)]. Une seule, sauf `default_pass` avec `rules` : d'abord la configuration par défaut SEULE (rules vide), puis la vôtre.
+        Rien à écrire pour un nouvel outil : il suffit que `build_command` regarde `ctx.cfg.rules` (le lanceur exécute, analyse et fusionne chaque passe, voir runner.parse_task)."""
+        if cfg.default_pass and cfg.rules and self.supports_rules:
+            return [("default", replace(cfg, rules=[])), ("rules", cfg)]
+        return [("main", cfg)]
+
+    def check_rules(self, cfg: ToolConfig, exe: list[str]) -> str | None:
+        """Valide `cfg.rules` (existence déjà vérifiée) avant tout lancement : message à destination de l'auditeur, ou None."""
+        return None
+
+    def warnings(self, cfg: ToolConfig, exe: list[str]) -> list[str]:
+        """Avertissements écrits UNE fois au début d'un audit (l'outil tourne, mais avec une couverture réduite : règles non appliquées, angle mort connu…)."""
+        return []
 
     def failure_hint(self, message: str) -> str | None:
         """Piste d'action ajoutée à l'erreur d'une exécution échouée (`message` = « code retour N : dernière ligne de stderr »)."""

@@ -1,8 +1,40 @@
-# Configuration de l'image Docker : tous les outils sont installés dans le PATH ou à des chemins fixes.
-unpack: {enabled: false}
+# Configuration de l'image Docker « aule » : TOUS les outils sont installés et activés ; leurs règles et leurs bases ont été téléchargées à la CONSTRUCTION de
+# l'image, donc aucun accès réseau n'est nécessaire au lancement (`docker run --network none …` fonctionne).
+# PAS D'IA : aucun llm.yaml dans l'image et la critique est désactivée.
+# AUCUN secret ici : la clé de l'API NVD n'est donnée qu'à la construction, en secret de construction (voir le Dockerfile).
+unpack: {enabled: false}                 # à la demande : docker run … aule --unpack
+critiq: {enabled: false}
+
 tools:
-  gittools: {}                                                   # git-extractor-rs, dans le PATH de l'image
-  # outils optionnels à activer ici ou avec --with : opengrep, dependency-check, codeql, trufflehog, osv-scanner, trivy, checkov
+  cloc: {enabled: true}
+  gitleaks: {enabled: true}              # sa configuration par défaut ; vos règles : voir le README (Docker, « vos propres règles »)
+  trufflehog:
+    enabled: true
+    options: {verify: false}             # jamais d'appel aux services concernés pour « tester » les secrets trouvés
   opengrep:
-    options: {rules_path: /work/data/rules/opengrep-rules}     # aule update opengrep (réseau), ou volume pré-rempli
-  codeql: {timeout: 14400}
+    enabled: true
+    options: {rules_path: /opt/rules/opengrep-rules}      # cloné à la construction
+  codeql:
+    enabled: true
+    path: /opt/codeql/codeql
+    timeout: 14400
+    options: {suite: security-extended, download: false}  # le bundle embarque les requêtes précompilées
+  osv-scanner:
+    enabled: true
+    options: {offline: true}             # --offline : aucune donnée de projet ne quitte la machine
+    env: {OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: /opt/osv-data}
+  trivy:
+    enabled: true
+    options: {skip_db_update: true, offline: true, cache_dir: /opt/trivy-cache}
+    extra_args: [--skip-java-db-update, --skip-check-update, --skip-version-check]
+  checkov:
+    enabled: true
+    env: {BC_SKIP_MAPPING: "TRUE"}       # pas de téléchargement du fichier de correspondance
+  dependency-check:
+    enabled: __DEPENDENCY_CHECK_ENABLED__                 # true si la base NVD a été préparée à la construction, sinon false (remplacé par le Dockerfile)
+    path: /opt/dependency-check/bin/dependency-check.sh
+    options: {data_path: /opt/depcheck-db, update: false}
+    # Les analyseurs qui interrogent un service externe (noms de paquets, empreintes de jar) sont coupés : rien ne sort de la machine.
+    extra_args: [--disableOssIndex, --disableCentral, --disableNodeAudit, --disableYarnAudit, --disableVersionCheck]
+  gittools: {enabled: true}              # git-extractor-rs, installé dans le PATH : historique reconstruit des projets qui ont un .git
+  links: {enabled: true}

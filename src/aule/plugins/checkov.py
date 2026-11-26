@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..config import ToolConfig
 from ..models import ParsedEntity, Project, sha256_text as _sha
 from ..techmap import detect_ecosystems
 from ..vulns import normalize_severity
@@ -36,9 +37,17 @@ class Checkov(Tool):
     def reason(self, project: Project, mode: str, ctx: RunContext) -> str:
         return "aucun fichier d'infrastructure as code détecté (Terraform, Dockerfile, Compose, Helm...)"
 
+    supports_rules = True  # chaque dossier = un `--external-checks-dir` (⚠ Checkov EXÉCUTE les .py qu'il y trouve : dossiers de confiance uniquement)
+
+    def check_rules(self, cfg: ToolConfig, exe: list[str]) -> str | None:
+        if files := [r for r in cfg.rules if not Path(r).is_dir()]:
+            return f"tools.checkov.rules : des DOSSIERS sont attendus (--external-checks-dir), pas des fichiers : {', '.join(files)}"
+        return None
+
     def build_command(self, project: Project, mode: str, report_path: Path, ctx: RunContext) -> list[str]:
+        custom = [arg for r in ctx.cfg.rules for arg in ("--external-checks-dir", r)]
         return [*ctx.exe, "-d", str(project.path), "-o", "json", "--output-file-path", str(report_path.parent),
-                "--quiet", "--compact", *ctx.cfg.extra_args]
+                "--quiet", "--compact", *custom, *ctx.cfg.extra_args]
 
     def parse(self, project: Project, mode: str, report_path: Path, ctx: RunContext) -> list[ParsedEntity]:
         text = report_path.read_text(encoding="utf-8").strip() if report_path.exists() else ""

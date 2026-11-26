@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import cli_pretty as pretty
 from .ui import ui
-from .config import CRITIQ_KINDS, Config, ConfigError, load_config
+from .config import CRITIQ_KINDS, Config, ConfigError, load_config, loose_secret_warning
 from .correlate import correlate_run, compute_clusters
 from .critiq import _slug, apply_critiques, run_critique, select_applicable
 import dataclasses
@@ -46,8 +46,8 @@ def _n(value: int) -> str:
 def cmd_run(args, db: Database, config: Config) -> int:
     split = lambda text: [n.strip() for n in text.split(",") if n.strip()]  # noqa: E731
     names = split(args.tools) if args.tools else None
-    if args.more_code:
-        config = dataclasses.replace(config, critiq=dataclasses.replace(config.critiq, allow_more_code=True))
+    if args.more_code or args.auto_retry:
+        config = dataclasses.replace(config, critiq=dataclasses.replace(config.critiq, **{k: True for k, on in (("allow_more_code", args.more_code), ("auto_retry", args.auto_retry)) if on}))
     try:
         extra = split(args.with_tools or "") + (["gittools"] if args.history else [])  # outils optionnels à ajouter
         if extra:
@@ -546,7 +546,7 @@ def cmd_critiq(args, db: Database, config: Config) -> int:
     if not run_id or not db.get_audit(run_id):
         print("Aucun audit. Lancez d'abord : aule run <dossier>", file=sys.stderr)
         return 1
-    cfg = dataclasses.replace(config.critiq, **({"allow_more_code": True} if getattr(args, "more_code", False) else {}))
+    cfg = dataclasses.replace(config.critiq, **{k: True for k, on in (("allow_more_code", getattr(args, "more_code", False)), ("auto_retry", getattr(args, "auto_retry", False))) if on})
     llm = dataclasses.replace(config.llm, model=args.model or config.llm.model) if config.llm else None
     try:
         if args.critiq_cmd == "run":
@@ -571,7 +571,8 @@ def cmd_critiq(args, db: Database, config: Config) -> int:
             v = summary["verdicts"]
             ui.ok(f"Terminé : {summary['critiqued']} nouveau(x) avis, {summary['cached']} en cache, {summary['errors']} erreur(s) — "
                   + (", ".join(f"{k} {n}" for k, n in v.items()) or "aucun avis") + ". Avis consultatifs : à vérifier avant tout triage."
-                  + (f" Jetons consommés : {summary['tokens']}." if summary.get("tokens") else ""))
+                  + (f" Jetons consommés : {summary['tokens']}." if summary.get("tokens") else "")
+                  + (f" {summary['retries']} relance(s) après panne passagère." if summary.get("retries") else ""))
             return 1 if summary["aborted"] else 0
         crit = db.critiques(args.model)
         names = {p["id"]: p["name"] for p in db.list_projects(run_id)}
@@ -718,6 +719,8 @@ def cmd_update(args, db: Database | None, config: Config) -> int:
               "ou nommez-les (aule update opengrep).")
         return 0
     code = 0
+    if warning := loose_secret_warning(config, tools):
+        ui.warn(warning)
     for tool in tools:
         cfg = config.tool(tool.name)
         print(f"== {tool.name}")
@@ -850,6 +853,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="reconstruit l'historique des .git avec gittools et le scanne (mode gitleaks history)")
     run.add_argument("--with", dest="with_tools", metavar="OUTILS",
                      help="ajoute des outils optionnels aux outils activés : opengrep, dependency-check, gittools")
+    run.add_argument("--auto-retry", action="store_true", help="avec --critiq : retente sans limite une panne passagère du moteur au lieu d'abandonner (critiq.auto_retry)")
     run.add_argument("--more-code", action="store_true", help="avec --critiq : le modèle peut réclamer beaucoup plus de code, donné automatiquement (critiq.allow_more_code)")
     run.add_argument("--critiq", action="store_true",
                      help="une fois les outils passés, demande l'avis d'un modèle d'IA (Ollama) sur les résultats (section critiq de aule.yaml)")
@@ -1030,6 +1034,7 @@ def build_parser() -> argparse.ArgumentParser:
     cq_common(c_run)
     c_run.add_argument("--kind", help="secret,sast,vuln (défaut : critiq.kinds)")
     c_run.add_argument("--force", action="store_true", help="refait les avis même en cache")
+    c_run.add_argument("--auto-retry", action="store_true", help="une panne passagère du moteur (504, 503, 429, délai dépassé) ne fait JAMAIS abandonner : retenté sans limite, pause croissante ; Ctrl-C pour arrêter (critiq.auto_retry)")
     c_run.add_argument("--more-code", action="store_true", help="le modèle peut réclamer beaucoup plus de code (fichiers entiers, dossiers, davantage de tours), donné automatiquement : critiq.allow_more_code")
     c_run.add_argument("--max", type=int, metavar="N", help="au plus N constats (défaut : critiq.max_findings)")
     c_run.add_argument("--dry-run", action="store_true", help="n'envoie RIEN : compte et, avec --show, affiche le texte exact qui serait envoyé")
@@ -1108,6 +1113,9 @@ def main(argv: list[str] | None = None) -> int:
     except RunRefError as exc:
         ui.error(f"{exc}")
         return 2
+    except KeyboardInterrupt:
+        ui.error("interrompu (Ctrl-C)")
+        return 130
     finally:
         if db:
             db.close()

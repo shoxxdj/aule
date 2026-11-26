@@ -19,6 +19,7 @@ import math
 import os
 import re
 import subprocess
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -423,8 +424,26 @@ class Outcome:
     responses: list
 
 
+def _patiently(call: Callable[[], Any], cfg: CritiqConfig, on_retry: Callable[[int, float, LLMError], None] | None, sleep: Callable[[float], None] | None):
+    """Exécute `call` ; avec `auto_retry`, une panne PASSAGÈRE (504, 503, 429, délai dépassé…) est retentée SANS LIMITE, avec une pause croissante
+    (5, 10, 20… secondes, plafonnée par retry_max_wait). Une erreur permanente (clé refusée, adresse introuvable…) remonte aussitôt : l'attendre ne servirait à rien."""
+    attempt = 0
+    while True:
+        try:
+            return call()
+        except LLMError as exc:
+            if not (cfg.auto_retry and exc.transient):
+                raise
+            attempt += 1
+            pause = min(cfg.retry_max_wait, 5 * 2 ** min(attempt - 1, 16))
+            if on_retry:
+                on_retry(attempt, pause, exc)
+            (sleep or time.sleep)(pause)
+
+
 def critique_unit(provider: Provider, unit: Unit, access: CodeAccess, cfg: CritiqConfig, redact: Redactor,
-                  features: dict | None, initial: tuple[str, list, list] | None = None) -> Outcome:
+                  features: dict | None, initial: tuple[str, list, list] | None = None, *, on_retry: Callable[[int, float, LLMError], None] | None = None,
+                  sleep: Callable[[float], None] | None = None) -> Outcome:
     user, sent, untrusted = initial or build_initial(unit, access, cfg, redact, features=features)
     more = cfg.allow_more_code
     rounds_cap = max(cfg.max_rounds, cfg.extended_rounds) if more else cfg.max_rounds
@@ -433,7 +452,7 @@ def critique_unit(provider: Provider, unit: Unit, access: CodeAccess, cfg: Criti
     responses, requests, round_no, retried = [], [], 1, False
     verdict = None
     while round_no <= rounds_cap:
-        raw = provider.chat(messages, SCHEMA)
+        raw = _patiently(lambda: provider.chat(messages, SCHEMA), cfg, on_retry, sleep)  # seul l'appel en échec est retenté, pas les tours déjà obtenus
         responses.append(raw)
         try:
             verdict = parse_verdict(raw)
@@ -488,7 +507,7 @@ def _slug(model: str) -> str:
 
 def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *, llm: LLMConfig | None = None, provider: Provider | None = None, kinds: tuple[str, ...] | None = None,
                  force: bool = False, max_findings: int | None = None, dry_run: bool = False, show: int = 0,
-                 log: Callable[[str], None] = print, progress: Callable[[int, int, int], None] | None = None) -> dict[str, Any]:
+                 log: Callable[[str], None] = print, progress: Callable[[int, int, int], None] | None = None, sleep: Callable[[float], None] | None = None) -> dict[str, Any]:
     if not db.get_audit(run_id):
         raise KeyError(run_id)
     if provider is None:
@@ -500,8 +519,15 @@ def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *
             if not dry_run:
                 raise
             provider = _NoEngine(llm)  # --dry-run n'envoie rien : il ne doit exiger ni jeton ni endpoint autorisé
+    relances = [0]
+
+    def retry_log(what: str):
+        def on_retry(attempt: int, pause: float, exc: LLMError) -> None:
+            relances[0] += 1
+            log(f"  ! {what}{' '.join(str(exc).split())[:140]} — nouvelle tentative n°{attempt} dans {pause:g} s (auto_retry ; Ctrl-C pour arrêter)")
+        return on_retry
     if not dry_run:
-        provider.check()
+        _patiently(provider.check, cfg, retry_log("moteur : "), sleep)
     kinds = kinds or cfg.kinds
     # reveal=True UNIQUEMENT pour construire l'expurgation et les indices : les valeurs ne sont jamais envoyées ni stockées
     data = build_report_data(db, run_id, data_dir, reveal=True)
@@ -554,8 +580,12 @@ def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *
                 progress(i, len(units), 5)
             continue
         try:
-            out = critique_unit(provider, unit, access, cfg, redact, features, initial)
+            out = critique_unit(provider, unit, access, cfg, redact, features, initial, on_retry=retry_log(f"{unit.project} · {unit.label} : "), sleep=sleep)
             consecutive = 0
+        except KeyboardInterrupt:  # Ctrl-C : les avis déjà obtenus sont enregistrés ; relancer reprend (avis en cache)
+            summary["aborted"] = "interrompu (Ctrl-C) : relancez la commande pour reprendre, les avis déjà obtenus sont conservés"
+            log(f"  ! {summary['aborted']}")
+            break
         except LLMError as exc:
             summary["errors"] += 1
             consecutive += 1
@@ -586,6 +616,7 @@ def run_critique(db: Database, data_dir: Path, run_id: str, cfg: CritiqConfig, *
             progress(i, len(units), 5)
     summary["verdicts"] = dict(summary["verdicts"])
     summary["tokens"] = int(getattr(provider, "tokens", 0) or 0)
+    summary["retries"] = relances[0]
     return summary
 
 

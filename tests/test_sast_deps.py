@@ -12,7 +12,9 @@ from unittest import mock
 
 import fakes
 from aule.cli import main
-from aule.config import parse_config
+from aule.config import load_config, parse_config
+from aule.orchestrator import run_audit
+from aule.plugins.depcheck import DependencyCheck
 from aule.sarif import parse_sarif, relative_uri, severity_from
 from aule.techmap import detect_ecosystems
 from common import AuditCase, git
@@ -256,14 +258,17 @@ class DependencyCheckTest(AuditCase):
 
     def test_api_key_is_redacted_everywhere_but_passed_to_the_tool(self):
         key = "SUPER-SECRET-NVD-KEY-123"
-        with mock.patch.dict(os.environ, {"NVD_API_KEY": key}):
-            run_id = self.run_audit(tool_names=["cloc", "dependency-check"])
+        cfg = parse_config({"tools": {"dependency-check": {"options": {"nvd_api_key": key}}}}, self.tmp)           # la clé est dans la configuration
+        run_id = self.run_audit(cfg, tool_names=["cloc", "dependency-check"])
         self.assertIn("depcheck-key:yes", self.calls())  # l'outil l'a bien reçue
         raw = self.data / "runs" / run_id / "repo-git" / "dependency-check" / "scan"
         for name in ("cmd.txt", "meta.json", "stdout.txt", "stderr.txt"):
             self.assertNotIn(key, (raw / name).read_text(), name)
         self.assertIn("--nvdApiKey ***", (raw / "cmd.txt").read_text())
         self.assertNotIn(key, "\n".join(self.db.conn.iterdump()))
+        for path in self.data.rglob("*"):                                                                       # ... et nulle part dans les données conservées
+            if path.is_file() and path.stat().st_size < 5_000_000:
+                self.assertNotIn(key.encode(), path.read_bytes(), str(path))
 
     def test_options_noupdate_formats_and_data_path(self):
         cfg = parse_config({"tools": {"dependency-check": {"options": {
@@ -286,12 +291,69 @@ class DependencyCheckTest(AuditCase):
     def test_update_command_uses_key_without_printing_it(self):
         key = "ANOTHER-KEY-456"
         buf = io.StringIO()
-        with mock.patch.dict(os.environ, {"NVD_API_KEY": key}), contextlib.redirect_stdout(buf):
-            code = main(["update", "dependency-check", "--data", str(self.data)])
+        with contextlib.redirect_stdout(buf):
+            code = main(["update", "dependency-check", "--data", str(self.data), "--config", str(self.config_file(f"nvd_api_key: {key}"))])
         self.assertEqual(code, 0)
         self.assertIn("depcheck-update:key=yes", self.calls())
         self.assertNotIn(key, buf.getvalue())
         self.assertTrue((self.data / "depcheck-db").is_dir())
+
+    def config_file(self, option_lines: str = "", mode: int = 0o600) -> Path:
+        """Un aule.yaml réel (la clé NVD y est une option de l'outil), avec les droits voulus."""
+        path = self.tmp / "aule.yaml"
+        path.write_text("tools:\n  dependency-check:\n    options:\n" + "".join(f"      {line}\n" for line in option_lines.splitlines()) if option_lines else "tools: {}\n")
+        path.chmod(mode)
+        return path
+
+    def test_the_environment_is_never_consulted(self):
+        with mock.patch.dict(os.environ, {"NVD_API_KEY": "ENV-KEY-NE-DOIT-PAS-SERVIR", "NVD_KEY": "ENV-KEY-2"}):
+            self.run_audit(tool_names=["cloc", "dependency-check"])
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                main(["update", "dependency-check", "--data", str(self.data)])
+        self.assertIn("depcheck-key:no", self.calls())                                                          # la variable de l'ancienne version n'est plus lue
+        self.assertIn("depcheck-update:key=no", self.calls())
+        self.assertIn("`nvd_api_key` dans aule.yaml", buf.getvalue())                                           # et le message dit où la mettre
+
+    def test_the_old_env_option_is_refused_with_the_way_out(self):
+        cfg = parse_config({"tools": {"dependency-check": {"options": {"nvd_api_key_env": "MA_VAR"}}}}, self.tmp)
+        lines: list[str] = []
+        run_id = run_audit(self.db, self.data, self.root, config=cfg, tool_names=["cloc", "dependency-check"], log=lines.append)
+        self.assertTrue(any("nvd_api_key_env n'existe plus" in ln and "`nvd_api_key`" in ln for ln in lines), lines)
+        self.assertNotIn("depcheck-key:yes", self.calls())                                                      # rien n'a été lancé avec une configuration ambiguë
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+            code = main(["update", "dependency-check", "--data", str(self.data), "--config", str(self.config_file("nvd_api_key_env: MA_VAR"))])
+        self.assertEqual(code, 2)
+        self.assertIn("nvd_api_key_env n'existe plus", buf.getvalue())
+
+    def test_an_invalid_key_is_refused_without_being_echoed(self):
+        for bad in ("avec espace", 123456789, ["liste"], "ligne1\nligne2", ""):
+            cfg = parse_config({"tools": {"dependency-check": {"options": {"nvd_api_key": bad}}}}, self.tmp)
+            problem = DependencyCheck.check_options(cfg.tool("dependency-check"))
+            if bad == "":
+                self.assertIsNone(problem)                                                                      # vide : comme absent (pas de clé)
+                continue
+            self.assertIn("nvd_api_key", problem, bad)
+            for leak in ("avec espace", "123456789", "ligne2"):
+                self.assertNotIn(leak, problem)
+
+    def test_a_loose_config_file_is_flagged_only_when_it_holds_a_key(self):
+        def warnings(**kw):
+            path = self.config_file(**kw)
+            lines: list[str] = []
+            run_audit(self.db, self.data, self.root, config=load_config(path), tool_names=["cloc", "dependency-check"], log=lines.append)
+            return [ln for ln in lines if "lisible par d'autres utilisateurs" in ln]
+        self.assertEqual(len(warnings(option_lines="nvd_api_key: CLE-0123456789", mode=0o644)), 1)
+        self.assertIn("chmod 600", warnings(option_lines="nvd_api_key: CLE-0123456789", mode=0o644)[0])
+        self.assertEqual(warnings(option_lines="nvd_api_key: CLE-0123456789", mode=0o600), [])                  # droits stricts : rien à dire
+        self.assertEqual(warnings(option_lines="update: true", mode=0o644), [])                                 # un fichier ouvert SANS clé n'est pas un problème
+        self.assertEqual(warnings(mode=0o644), [])
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(buf):
+            main(["update", "dependency-check", "--data", str(self.data), "--config", str(self.config_file("nvd_api_key: CLE-0123456789", mode=0o644))])
+        self.assertIn("chmod 600", buf.getvalue())                                                              # `aule update` avertit aussi
+        self.assertNotIn("CLE-0123456789", buf.getvalue())
 
 
 class PhaseOrderTest(AuditCase):

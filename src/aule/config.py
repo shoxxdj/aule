@@ -31,6 +31,8 @@ class ToolConfig:
     timeout: int | None = None
     max_parallel: int | None = None      # exécutions simultanées de cet outil (défaut : propre à l'outil)
     modes: list[str] | None = None       # restreint les modes (ex. gitleaks : ["dir"], codeql : ["python"])
+    rules: list[str] = field(default_factory=list)   # dossiers ou fichiers de règles personnalisées : l'outil est lancé avec TOUS (chemins absolus)
+    default_pass: bool = False           # avec `rules` : l'outil tourne AUSSI avec sa configuration par défaut seule (deux passes dans la même exécution)
     options: dict[str, Any] = field(default_factory=dict)  # options propres à l'outil
 
 
@@ -63,6 +65,9 @@ class CritiqConfig:
     deny_globs: tuple[str, ...] = DEFAULT_DENY_GLOBS   # fichiers jamais envoyés, même si le modèle les demande
     # --- case à cocher : le modèle peut réclamer BEAUCOUP plus de code, et on le lui donne automatiquement (secrets, deny_globs et confinement au projet restent en vigueur)
     allow_more_code: bool = False
+    # --- panne passagère du moteur (504, 503, 429, délai dépassé…) : retenter SANS LIMITE au lieu d'abandonner après 3 erreurs de suite (une erreur permanente n'est jamais retentée)
+    auto_retry: bool = False
+    retry_max_wait: int = 300                # plafond (secondes) de la pause entre deux tentatives : 5, 10, 20… puis ce plafond
     extended_rounds: int = 8                 # tours de demandes (au lieu de max_rounds)
     extended_request_lines: int = 600        # lignes par plage (au lieu de max_request_lines) : un fichier moyen tient en une demande
     extended_budget_chars: int = 150000      # code supplémentaire envoyé pour UN constat (borné au contexte avec Ollama : num_ctx)
@@ -108,6 +113,17 @@ def _resolve_path(value: str, base: Path) -> str:
         p = Path(value).expanduser()
         return str(p if p.is_absolute() else (base / p))
     return value
+
+
+def loose_secret_warning(config: "Config", tools) -> str | None:
+    """aule.yaml peut porter la clé d'API d'un outil (ex. nvd_api_key) : avertir s'il est lisible par d'autres utilisateurs."""
+    if config.source is None or not any(config.tool(t.name).options.get(k) for t in tools for k in t.secret_options):
+        return None
+    try:
+        loose = Path(config.source).stat().st_mode & 0o044
+    except OSError:
+        return None
+    return f"{config.source} contient une clé d'API et est lisible par d'autres utilisateurs : chmod 600" if loose else None
 
 
 def _load_llm(data: dict[str, Any], base: Path, source: Path | None):
@@ -160,7 +176,7 @@ def parse_config(data: dict[str, Any] | None, base: Path, source: Path | None = 
             raise ConfigError(f"critiq.kinds : valeur(s) inconnue(s) {bad} (attendu : secret, sast, vuln)")
         if q.get("min_severity", "low") not in SEVERITIES:
             raise ConfigError("critiq.min_severity : critical, high, medium, low ou info")
-        for flag in ("enabled", "skip_triaged", "send_secret_values", "allow_more_code"):  # strict : « false » (texte) serait lu comme vrai
+        for flag in ("enabled", "skip_triaged", "send_secret_values", "allow_more_code", "auto_retry"):  # strict : « false » (texte) serait lu comme vrai
             if not isinstance(q.get(flag, False), bool):
                 raise ConfigError(f"critiq.{flag} : true ou false (sans guillemets)")
         cfg.critiq = CritiqConfig(
@@ -168,6 +184,7 @@ def parse_config(data: dict[str, Any] | None, base: Path, source: Path | None = 
             context_lines=max(0, int(q.get("context_lines", 15))), max_rounds=max(1, int(q.get("max_rounds", 3))),
             max_request_lines=max(10, int(q.get("max_request_lines", 120))), max_prompt_chars=max(2000, int(q.get("max_prompt_chars", 18000))),
             skip_triaged=q.get("skip_triaged", True), send_secret_values=q.get("send_secret_values", False), allow_more_code=q.get("allow_more_code", False),
+            auto_retry=q.get("auto_retry", False), retry_max_wait=max(5, min(3600, int(q.get("retry_max_wait", 300)))),
             extended_rounds=max(1, min(30, int(q.get("extended_rounds", 8)))), extended_request_lines=max(20, min(5000, int(q.get("extended_request_lines", 600)))),
             extended_budget_chars=max(5000, min(2_000_000, int(q.get("extended_budget_chars", 150000)))),
             deny_globs=tuple(_str_list(q["deny_globs"], "critiq.deny_globs")) if "deny_globs" in q else DEFAULT_DENY_GLOBS)
@@ -179,7 +196,7 @@ def parse_config(data: dict[str, Any] | None, base: Path, source: Path | None = 
             raise ConfigError(f"tools.{name} : configuré deux fois (un alias et le nom réel désignent le même outil)")
         where = f"tools.{name}"
         t = _expect(raw or {}, dict, where)
-        _check_keys(t, {"enabled", "path", "launcher", "extra_args", "env", "timeout", "max_parallel", "modes", "options"}, where)
+        _check_keys(t, {"enabled", "path", "launcher", "extra_args", "env", "timeout", "max_parallel", "modes", "rules", "default_pass", "options"}, where)
         tc = ToolConfig()
         if "enabled" in t:
             tc.enabled = bool(_expect(t["enabled"], bool, f"{where}.enabled"))
@@ -197,6 +214,19 @@ def parse_config(data: dict[str, Any] | None, base: Path, source: Path | None = 
             tc.max_parallel = max(1, int(_expect(t["max_parallel"], int, f"{where}.max_parallel")))
         if t.get("modes") is not None:
             tc.modes = _str_list(t["modes"], f"{where}.modes")
+        if "rules" in t:
+            raw_rules = [t["rules"]] if isinstance(t["rules"], str) else _expect(t["rules"], list, f"{where}.rules")
+            for entry in raw_rules:
+                if not isinstance(entry, str) or not entry.strip():
+                    raise ConfigError(f"{where}.rules : des chemins (texte non vide) sont attendus, reçu {entry!r}")
+                p = Path(entry).expanduser()
+                resolved = str(p if p.is_absolute() else base / p)  # toujours relatif au fichier YAML, même un nom nu
+                if resolved not in tc.rules:
+                    tc.rules.append(resolved)
+        if "default_pass" in t:
+            if not isinstance(t["default_pass"], bool):
+                raise ConfigError(f"{where}.default_pass : true ou false (sans guillemets)")
+            tc.default_pass = t["default_pass"]
         if "options" in t:
             tc.options = dict(_expect(t["options"] or {}, dict, f"{where}.options"))
             for key, value in tc.options.items():  # options *_path / *_dir : relatives au fichier YAML

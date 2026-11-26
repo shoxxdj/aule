@@ -166,7 +166,8 @@ def run_doctor(config: Config, data_dir: Path, *, only: list[str] | None = None,
             log(f"  … {name}")
             run_id = run_audit(db, work / "data", corpus, config=cfg, tool_names=sorted({"cloc", name}), jobs=1,
                                timeout=timeout, log=lambda *_: None)
-            checks.append(_evaluate(db, work / "data", run_id, tool, name))
+            check = _evaluate(db, work / "data", run_id, tool, name)
+            checks.append(check)
         db.close()
     finally:
         if not keep:

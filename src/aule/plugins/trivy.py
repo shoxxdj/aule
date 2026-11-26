@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..config import ToolConfig
 from ..models import ParsedEntity, Project, sha256_text as _sha
 from ..techmap import detect_ecosystems
 from ..vulns import make_purl, normalize_severity, vulnerability_data
@@ -39,6 +40,20 @@ class Trivy(Tool):
     def reason(self, project: Project, mode: str, ctx: RunContext) -> str:
         return "aucun composant ni fichier d'infrastructure détecté (technologies : " + (", ".join(sorted(ctx.languages(project.name) or {})) or "aucune") + ")"
 
+    supports_rules = True  # `--config-check` répété (Trivy récent ; avant : --config-policy) ; options.check_namespaces (défaut [user]) : sans espace de noms, vos règles ne sont PAS évaluées
+
+    @staticmethod
+    def _namespaces(cfg: ToolConfig) -> list[str]:
+        value = cfg.options.get("check_namespaces", ["user"])
+        return [value] if isinstance(value, str) else [str(v) for v in value]
+
+    def check_rules(self, cfg: ToolConfig, exe: list[str]) -> str | None:
+        if "misconfig" not in cfg.options.get("scanners", ["vuln", "misconfig"]):
+            return "tools.trivy.rules : des règles Rego ne s'appliquent qu'avec le scanner `misconfig` (options.scanners)"
+        if not self._namespaces(cfg) or not all(n.strip() for n in self._namespaces(cfg)):
+            return "tools.trivy.options.check_namespaces : au moins un espace de noms Rego (ex. user) : sans lui, vos règles ne sont pas évaluées"
+        return None
+
     def build_command(self, project: Project, mode: str, report_path: Path, ctx: RunContext) -> list[str]:
         opts = ctx.cfg.options
         cmd = [*ctx.exe, "fs", "--format", "json", "--output", str(report_path), "--quiet",
@@ -49,6 +64,8 @@ class Trivy(Tool):
             cmd.append("--offline-scan")
         if opts.get("cache_dir"):
             cmd += ["--cache-dir", str(opts["cache_dir"])]
+        if ctx.cfg.rules:
+            cmd += [arg for r in ctx.cfg.rules for arg in ("--config-check", r)] + [arg for ns in self._namespaces(ctx.cfg) for arg in ("--check-namespaces", ns)]
         return [*cmd, *ctx.cfg.extra_args, str(project.path)]
 
     def parse(self, project: Project, mode: str, report_path: Path, ctx: RunContext) -> list[ParsedEntity]:

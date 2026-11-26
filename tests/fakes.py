@@ -46,8 +46,14 @@ GITLEAKS = r'''#!/usr/bin/env python3
 import json, os, re, subprocess, sys
 args = sys.argv[1:]
 if args[0] == "version":
-    print("8.30.0"); sys.exit(0)
+    print(os.environ.get("FAKE_GITLEAKS_VERSION", "8.30.0")); sys.exit(0)
 mode, path = args[0], args[-1]
+if os.environ.get("FAKE_GL_ARGV"):
+    open(os.environ["FAKE_GL_ARGV"], "a").write(json.dumps(args) + "\n")
+if os.environ.get("FAKE_GL_NO_REPORT_CONFIG") and "--config" in args:  # sort « avec succès » sans écrire de rapport
+    sys.exit(0)
+if os.environ.get("FAKE_GL_FAIL_CONFIG") and "--config" in args:  # une configuration que le « vrai » gitleaks refuserait à l'exécution
+    sys.stderr.write("boom : configuration refusée\n"); sys.exit(2)
 if os.environ.get("FAKE_LOG"):
     open(os.environ["FAKE_LOG"], "a").write("gitleaks-" + mode + "\n")
 if os.environ.get("FAKE_GITLEAKS_FAIL"):
@@ -55,19 +61,45 @@ if os.environ.get("FAKE_GITLEAKS_FAIL"):
 report = args[args.index("--report-path") + 1]
 RULES = [("aws-access-token", re.compile(r"AKIA[0-9A-Z]{16}")), ("github-pat", re.compile(r"ghp_[A-Za-z0-9]{36}"))]
 findings = []
+# FAKE_GITLEAKS_HONOR_CONFIG : applique --config comme le vrai gitleaks (règles [[rules]] : regex, secretGroup, path ; [allowlist] global ; SANS
+# `[extend] useDefault`, --config REMPLACE les règles par défaut). Désactivé par défaut : les corpus des autres tests contiennent des .env.
+CUSTOM, ALLOW, ALLOW_PATHS = [], [], []
+if os.environ.get("FAKE_GITLEAKS_HONOR_CONFIG"):
+    defaults_active = True  # sans --config : la configuration par défaut de gitleaks
+    if "--config" in args:
+        import tomllib
+        conf = tomllib.load(open(args[args.index("--config") + 1], "rb"))
+        defaults_active = bool(conf.get("extend", {}).get("useDefault"))
+        if not defaults_active:
+            RULES = []
+        CUSTOM = [(r["id"], re.compile(r["regex"]), r.get("secretGroup", 0), re.compile(r["path"]) if r.get("path") else None, r.get("description", "")) for r in conf.get("rules", [])]
+        ALLOW = [re.compile(x) for x in conf.get("allowlist", {}).get("regexes", [])]
+        ALLOW_PATHS = [re.compile(x) for x in conf.get("allowlist", {}).get("paths", [])]
+    if defaults_active:  # MODÈLE SIMPLIFIÉ de l'exclusion globale par défaut de gitleaks (dossiers de dépendances) ; elle s'applique à TOUTES les règles quand on étend les règles par défaut
+        ALLOW_PATHS += [re.compile(r"(?:^|/)node_modules/"), re.compile(r"(?:^|/)vendor/")]
 
 def scan(text, **extra):
+    if any(rx.search(str(extra.get("File", ""))) for rx in ALLOW_PATHS):  # exclusion globale par chemin, testée sur le chemin TEL QUE rapporté (absolu avec une cible absolue)
+        return
     for i, line in enumerate(text.splitlines(), 1):
         for rule, rx in RULES:
             for m in rx.finditer(line):
                 findings.append({"RuleID": rule, "Description": rule.replace("-", " ").title(), "Secret": m.group(0),
                                  "Match": line.strip(), "StartLine": i, "EndLine": i, "Entropy": 3.8, "Tags": ["key"], **extra})
+        for rid, rx, group, path_rx, desc in CUSTOM:
+            if path_rx and not path_rx.search(str(extra.get("File", ""))):
+                continue
+            for m in rx.finditer(line):
+                secret = m.group(group)
+                if not any(a.search(secret) for a in ALLOW):
+                    findings.append({"RuleID": rid, "Description": desc, "Secret": secret, "Match": line.strip(), "StartLine": i, "EndLine": i,
+                                     "Entropy": 2.0, "Tags": ["credential"], **extra})
 
 if mode == "dir":
     for dp, dns, fns in os.walk(path):
         dns[:] = [d for d in dns if d != ".git"]
         for fn in sorted(fns):
-            full = os.path.join(dp, fn)
+            full = os.path.normpath(os.path.join(dp, fn))  # comme filepath.WalkDir de Go : `src/app.js` pour la cible `.` (jamais `./src/app.js`)
             try:
                 scan(open(full, errors="strict").read(), File=full)
             except (UnicodeDecodeError, OSError):
@@ -488,6 +520,10 @@ sys.exit(1 if failed else 0)
 '''
 
 
+ARGV_LOG = ("import json as _j, os as _o, sys as _s\nif _o.environ.get(\"FAKE_ARGV_DIR\"):\n"
+            "    open(_o.path.join(_o.environ[\"FAKE_ARGV_DIR\"], _o.path.basename(_s.argv[0]) + \".argv\"), \"a\").write(_j.dumps(_s.argv[1:]) + \"\\n\")\n")
+
+
 def install(bin_dir: Path, *, cloc: str | None = "cloc", gitleaks: str | None = "gitleaks",
             extractor: str | None = "git-extractor-rs", legacy_extractor: str | None = None, opengrep: str | None = "opengrep",
             depcheck: str | None = "dependency-check.sh", codeql: str | None = "codeql",
@@ -498,5 +534,5 @@ def install(bin_dir: Path, *, cloc: str | None = "cloc", gitleaks: str | None = 
                        (trufflehog, TRUFFLEHOG), (osv, OSV), (trivy, TRIVY), (checkov, CHECKOV)):
         if name:
             p = bin_dir / name
-            p.write_text(body)
+            p.write_text(body.replace("\n", "\n" + ARGV_LOG, 1))  # chaque faux outil journalise ses arguments si FAKE_ARGV_DIR est défini
             p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

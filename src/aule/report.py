@@ -18,7 +18,7 @@ from .diff import diff_runs
 from .plugins import load_plugins
 from .rawview import CACHE, result_detail, sarif_results
 from .rawview import _run as sarif_run
-from .runner import sha256_file
+from .runner import clear_values_of, raw_ref, report_digest
 
 TEMPLATE = Path(__file__).parent / "templates" / "report.html"
 RAW_DETAIL_BUDGET = 15 * 1024 * 1024  # taille max des résultats SARIF complets embarqués dans un rapport statique
@@ -38,14 +38,14 @@ def load_clear_secrets(db: Database, audit_id: str, data_dir: Path) -> tuple[dic
         tool = registry.get(r["tool"])
         if tool is None or not tool.secrets_source or r["status"] != "ok" or not r["raw_dir"]:
             continue
-        path = data_dir / r["raw_dir"] / tool.report_filename
+        raw_dir = data_dir / r["raw_dir"]
         label = f"{names[r['project_id']]} · {tool.name}/{r['mode']}"
         try:
-            # le rapport brut a-t-il changé depuis l'audit ? alors les index ne sont plus fiables
-            if sha256_file(path) != r["report_sha256"]:
+            # un rapport brut a-t-il changé depuis l'audit ? alors les index ne sont plus fiables (l'empreinte couvre TOUS les rapports de la tâche : une passe par rapport avec default_pass)
+            if report_digest(raw_dir, tool) != r["report_sha256"]:
                 warnings.append(f"{label} : sortie brute modifiée depuis l'audit, valeurs en clair indisponibles")
                 continue
-            clear[(names[r["project_id"]], tool.name, r["mode"])] = tool.clear_values(path) or {}
+            clear[(names[r["project_id"]], tool.name, r["mode"])] = clear_values_of(tool, raw_dir)
         except (OSError, ValueError):
             warnings.append(f"{label} : sortie brute illisible, valeurs en clair indisponibles")
     return clear, warnings
@@ -60,11 +60,11 @@ def reveal_one(db: Database, audit_id: str, data_dir: Path, fingerprint: str) ->
     tool = load_plugins().get(run["tool"]) if run else None
     if not (run and tool and tool.secrets_source and run["raw_dir"]):
         raise LookupError("cet élément n'a pas de sortie brute exploitable")
-    path = data_dir / run["raw_dir"] / tool.report_filename
+    raw_dir = data_dir / run["raw_dir"]
     try:
-        if sha256_file(path) != run["report_sha256"]:
+        if report_digest(raw_dir, tool) != run["report_sha256"]:
             raise ValueError("sortie brute modifiée depuis l'audit : valeur non fiable")
-        found = (tool.clear_values(path) or {}).get(ent["data"].get("raw_index"))
+        found = clear_values_of(tool, raw_dir).get(raw_ref(ent["data"]))
     except OSError as exc:
         raise LookupError("sortie brute introuvable") from exc
     if not found:
@@ -104,10 +104,11 @@ def build_report_data(db: Database, audit_id: str, data_dir: Path | None = None,
     registry = load_plugins()
     runs_by_id = {r["id"]: r for r in db.list_tool_runs(audit_id)}
 
-    def raw_report(tool_run_id: int) -> str | None:
+    def raw_report(tool_run_id: int, report: str | None = None) -> str | None:
+        """Rapport brut où relire un constat : celui de la tâche, ou celui d'une passe supplémentaire (`report`, chemin relatif au dossier de la tâche)."""
         run = runs_by_id.get(tool_run_id)
         tool = registry.get(run["tool"]) if run else None
-        return f"{run['raw_dir']}/{tool.report_filename}" if run and tool and run["raw_dir"] else None
+        return f"{run['raw_dir']}/{report or tool.report_filename}" if run and tool and run["raw_dir"] else None
 
     secrets = []
     for e in db.entities(audit_id, "secret"):
@@ -117,8 +118,8 @@ def build_report_data(db: Database, audit_id: str, data_dir: Path | None = None,
         tool_name = d.get("tool") or "gitleaks"  # résultats antérieurs au champ `tool`
         item = {"project": names[e["project_id"]], "fingerprint": e["fingerprint"], "triage": e["triage_status"],
                 "triage_comment": (triage.get(e["fingerprint"]) or {}).get("comment"), "critique": crit_of(e["fingerprint"]),
-                "cluster": cluster_of(e["fingerprint"]), **d, "tool": tool_name, "raw_report": raw_report(e["tool_run_id"])}
-        found = clear.get((item["project"], tool_name, d["mode"]), {}).get(d.get("raw_index"))
+                "cluster": cluster_of(e["fingerprint"]), **d, "tool": tool_name, "raw_report": raw_report(e["tool_run_id"], d.get("report"))}
+        found = clear.get((item["project"], tool_name, d["mode"]), {}).get(raw_ref(d))
         if found:
             item["secret"], item["match"] = found
         secrets.append(item)
@@ -126,7 +127,7 @@ def build_report_data(db: Database, audit_id: str, data_dir: Path | None = None,
     sast = []
     for e in db.entities(audit_id, "sast_finding"):
         d = dict(e["data"])
-        d["raw_report"] = raw_report(e["tool_run_id"])
+        d["raw_report"] = raw_report(e["tool_run_id"], d.get("report"))
         if not reveal and d.get("snippet") and _SECRETISH_RULE.search(d.get("rule_id") or ""):
             d["snippet"] = None  # best effort : le code de ces règles peut contenir la valeur du secret
         sast.append({"project": names[e["project_id"]], "fingerprint": e["fingerprint"], "triage": e["triage_status"],
@@ -157,7 +158,7 @@ def build_report_data(db: Database, audit_id: str, data_dir: Path | None = None,
         "secrets": secrets,
         "sast": sast,
         "vulns": [{"project": names[e["project_id"]], "fingerprint": e["fingerprint"], "triage": e["triage_status"],
-                   "triage_comment": (triage.get(e["fingerprint"]) or {}).get("comment"), "critique": crit_of(e["fingerprint"]), "cluster": cluster_of(e["fingerprint"]), **e["data"], "tool": e["data"].get("tool") or "dependency-check", "raw_report": raw_report(e["tool_run_id"])}
+                   "triage_comment": (triage.get(e["fingerprint"]) or {}).get("comment"), "critique": crit_of(e["fingerprint"]), "cluster": cluster_of(e["fingerprint"]), **e["data"], "tool": e["data"].get("tool") or "dependency-check", "raw_report": raw_report(e["tool_run_id"], e["data"].get("report"))}
                   for e in db.entities(audit_id, "vulnerability") if not (hide_false_positives and e["triage_status"] == "false_positive")],
         "deps": [{"project": names[e["project_id"]], **e["data"]} for e in db.entities(audit_id, "dependency")],
         "commits": [{"project": names[e["project_id"]], **e["data"]} for e in db.entities(audit_id, "commit")],

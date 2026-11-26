@@ -95,6 +95,21 @@ class CodeQL(Tool):
         return "aucune technologie prise en charge par CodeQL : " + ", ".join(sorted(languages))
 
     # --- requêtes ----------------------------------------------------------
+    supports_rules = True  # chaque dossier contient un sous-dossier par langage (python, javascript-typescript, java-kotlin…) : celui du langage analysé s'ajoute à la suite
+
+    @staticmethod
+    def _extra_specs(mode: str, cfg: ToolConfig) -> list[str]:
+        return [str(Path(r) / mode) for r in cfg.rules if (Path(r) / mode).is_dir()]
+
+    def check_rules(self, cfg: ToolConfig, exe: list[str]) -> str | None:
+        if files := [r for r in cfg.rules if not Path(r).is_dir()]:
+            return f"tools.codeql.rules : des DOSSIERS sont attendus (un sous-dossier par langage), pas des fichiers : {', '.join(files)}"
+        return None
+
+    def warnings(self, cfg: ToolConfig, exe: list[str]) -> list[str]:
+        return [f"tools.codeql.rules : {r} n'a aucun sous-dossier de langage ({', '.join(sorted(PACKS))}) : ces règles ne seront appliquées à aucun langage"
+                for r in cfg.rules if not any((Path(r) / m).is_dir() for m in PACKS)]
+
     def _query_spec(self, mode: str, cfg: ToolConfig) -> str:
         opts = cfg.options
         if (override := (opts.get("queries") or {}).get(mode)):
@@ -135,7 +150,7 @@ class CodeQL(Tool):
     def post_run(self, project: Project, mode: str, raw_dir: Path, report_path: Path, ctx: RunContext) -> None:
         opts = ctx.cfg.options
         db = self._db_dir(project, mode, ctx)
-        cmd = [*ctx.exe, "database", "analyze", str(db), self._query_spec(mode, ctx.cfg), "--format=sarif-latest",
+        cmd = [*ctx.exe, "database", "analyze", str(db), self._query_spec(mode, ctx.cfg), *self._extra_specs(mode, ctx.cfg), "--format=sarif-latest",
                f"--output={report_path}", "--sarif-add-snippets", f"--threads={opts.get('threads', 0)}"]
         if opts.get("ram"):
             cmd.append(f"--ram={opts['ram']}")

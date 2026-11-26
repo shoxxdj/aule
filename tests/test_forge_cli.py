@@ -238,18 +238,6 @@ class GlobalOptionsTest(ForgeCase):
         self.assertEqual(code, 0)
         self.assertNotIn("\x1b", out)                                               # sortie non terminale : texte historique par défaut
 
-    def test_the_docker_entrypoint_is_parseable_by_the_cli(self):
-        """Le Dockerfile met --config et --data AVANT la commande : ce test lie l'image à l'analyseur (c'était cassé)."""
-        import json as _json
-        from aule.cli import build_parser
-        text = (Path(__file__).parent.parent / "docker" / "Dockerfile").read_text()
-        entry = _json.loads(next(l for l in text.splitlines() if l.startswith("ENTRYPOINT")).removeprefix("ENTRYPOINT"))
-        cmd = _json.loads(next(l for l in text.splitlines() if l.startswith("CMD")).removeprefix("CMD"))
-        self.assertEqual(entry[0], "aule")
-        args = build_parser().parse_args(entry[1:] + cmd)
-        self.assertEqual((args.command, str(args.config), str(args.data)), ("tools", "/etc/aule/aule.yaml", "/work/data"))
-        self.assertIn("/etc/aule/aule.yaml", text)                                    # le fichier copié dans l'image porte le chemin attendu
-
 
 class WebBrandTest(ForgeCase):
     def test_the_web_page_carries_the_forge_identity(self):

@@ -24,6 +24,7 @@ class FakeOpenAI:
         self.responder = responder or (lambda payload, n: verdict_json())
         self.requests: list[dict] = []
         self.chats, self.lock = 0, threading.Lock()
+        self.models_override = None  # ex. ("http", 504, b"…") : panne simulée sur la liste des modèles
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -60,6 +61,9 @@ class FakeOpenAI:
                 self._record(None)
                 if not self._auth():
                     return
+                if self.path == "/v1/models" and outer.models_override:
+                    res = outer.models_override
+                    return self._send(res[1], res[2], res[3] if len(res) > 3 else None)
                 if self.path == "/v1/models":
                     return self._send(200, {"object": "list", "data": [{"id": m, "object": "model"} for m in outer.models]})
                 self._send(404, {"error": {"message": "not found"}})

@@ -41,6 +41,7 @@ class Opengrep(Tool):
     binary = "opengrep"
     modes = ("scan",)
     default_enabled = False
+    supports_rules = True  # tools.opengrep.rules : chaque dossier/fichier devient un `--config`, en plus du jeu communautaire
     updatable = True
     report_filename = "report.sarif"
     capture_stdout = True  # `opengrep scan --sarif` écrit le SARIF sur stdout, les journaux sur stderr
@@ -55,7 +56,7 @@ class Opengrep(Tool):
 
     def prerequisites(self, cfg: ToolConfig, data_dir: Path) -> str | None:
         rules = self.rules_path(cfg, data_dir)
-        if not rules.is_dir() or not self._available_dirs(rules):
+        if (not rules.is_dir() or not self._available_dirs(rules)) and not cfg.rules:  # vos règles suffisent sans le jeu communautaire
             return (f"jeu de règles introuvable ou vide : {rules} — lancez `aule update opengrep` "
                     "ou renseignez tools.opengrep.options.rules_path")
         return None
@@ -91,7 +92,7 @@ class Opengrep(Tool):
         return [rules / n for n in sorted(names & available)]
 
     def applicable(self, project: Project, mode: str, ctx: RunContext) -> bool:
-        return bool(self._rule_dirs(project, ctx))
+        return bool(self._rule_dirs(project, ctx)) or bool(ctx.cfg.rules)  # vos règles déclarent leurs langages : elles s'appliquent même sans technologie reconnue
 
     def reason(self, project: Project, mode: str, ctx: RunContext) -> str:
         languages = ctx.languages(project.name)
@@ -107,6 +108,8 @@ class Opengrep(Tool):
         cmd = [*ctx.exe, "scan", "--sarif"]
         for d in self._rule_dirs(project, ctx):
             cmd += ["--config", str(d)]
+        for custom in ctx.cfg.rules:
+            cmd += ["--config", custom]
         for pattern in ctx.cfg.options.get("exclude", DEFAULT_EXCLUDE):
             cmd += ["--exclude", pattern]
         return [*cmd, *ctx.cfg.extra_args, "."]
